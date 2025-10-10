@@ -1,0 +1,32 @@
+# Swift Package Manager
+/.build/
+/.swiftpm/
+/Packages/
+
+# Xcode / SwiftPM generated data
+DerivedData/
+*.xcbkptlist
+*.xcuserstate
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Debug / logs
+*.swp
+*.tmp
+*.log
+
+# Python virtual environments
+.env/
+.venv/
+
+# VS Code
+.vscode/
+.history/
+
+# Misc
+.idea/
+Thumbs.db
+.env

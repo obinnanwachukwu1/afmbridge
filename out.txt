@@ -1,0 +1,264 @@
+Using OpenAI base URL: http://localhost:8000/v1
+
+=== Basic Completion ===
+{
+  "id": "chatcmpl-74687D1CDD8A475CA349E43A4CBB8E21",
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "logprobs": null,
+      "message": {
+        "content": "Apple.",
+        "refusal": null,
+        "role": "assistant",
+        "annotations": null,
+        "audio": null,
+        "function_call": null,
+        "tool_calls": null
+      }
+    }
+  ],
+  "created": 1758163869,
+  "model": "ondevice",
+  "object": "chat.completion",
+  "service_tier": null,
+  "system_fingerprint": null,
+  "usage": null
+}
+
+=== Structured Completion ===
+{
+  "id": "chatcmpl-DB1CB560CC484D14A771BF33196B094F",
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "logprobs": null,
+      "message": {
+        "content": "```json\n{\n  \"sandwich_summary\": {\n    \"item1\": {\n      \"name\": \"Classic Turkey Sandwich\",\n      \"ingredients\": [\n        \"turkey slices\",\n        \"mayonnaise\",\n        \"lettuce\",\n        \"tomato\",\n        \"sourdough bread\"\n      ]\n    },\n    \"item2\": {\n      \"name\": \"Caprese Sandwich\",\n      \"ingredients\": [\n        \"mozzarella cheese\",\n        \"tomato slices\",\n        \"balsamic glaze\",\n        \"fresh basil\",\n        \"ciabatta bread\"\n      ]\n    }\n  }\n}\n```",
+        "refusal": null,
+        "role": "assistant",
+        "annotations": null,
+        "audio": null,
+        "function_call": null,
+        "tool_calls": null,
+        "parsed": {
+          "sandwich_summary": {
+            "item2": {
+              "ingredients": [
+                "mozzarella cheese",
+                "tomato slices",
+                "balsamic glaze",
+                "fresh basil",
+                "ciabatta bread"
+              ],
+              "name": "Caprese Sandwich"
+            },
+            "item1": {
+              "ingredients": [
+                "turkey slices",
+                "mayonnaise",
+                "lettuce",
+                "tomato",
+                "sourdough bread"
+              ],
+              "name": "Classic Turkey Sandwich"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "created": 1758163872,
+  "model": "ondevice",
+  "object": "chat.completion",
+  "service_tier": null,
+  "system_fingerprint": null,
+  "usage": null
+}
+
+=== Tool Call ===
+{
+  "id": "chatcmpl-5C95BF4A0E404B2A9D593F00069A585E",
+  "choices": [
+    {
+      "finish_reason": "tool_calls",
+      "index": 0,
+      "logprobs": null,
+      "message": {
+        "content": null,
+        "refusal": null,
+        "role": "assistant",
+        "annotations": null,
+        "audio": null,
+        "function_call": null,
+        "tool_calls": [
+          {
+            "id": "call_1",
+            "function": {
+              "arguments": "{\"message\":\"hello\"}",
+              "name": "echo"
+            },
+            "type": "function"
+          }
+        ]
+      }
+    }
+  ],
+  "created": 1758163874,
+  "model": "ondevice",
+  "object": "chat.completion",
+  "service_tier": null,
+  "system_fingerprint": null,
+  "usage": null
+}
+
+=== Tool Choice None ===
+{
+  "id": "chatcmpl-B3516A6635454E5C90E3358F5DAB9E2E",
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "logprobs": null,
+      "message": {
+        "content": "Tool choice none means that the user wants to avoid using any tools to solve the problem.",
+        "refusal": null,
+        "role": "assistant",
+        "annotations": null,
+        "audio": null,
+        "function_call": null,
+        "tool_calls": null
+      }
+    }
+  ],
+  "created": 1758163874,
+  "model": "ondevice",
+  "object": "chat.completion",
+  "service_tier": null,
+  "system_fingerprint": null,
+  "usage": null
+}
+
+=== Streaming Completion ===
+{
+  "id": "chatcmpl-22CD6ACAAC524733AE3416A3DEFFE093",
+  "choices": [
+    {
+      "delta": {
+        "content": null,
+        "function_call": null,
+        "refusal": null,
+        "role": "assistant",
+        "tool_calls": null
+      },
+      "finish_reason": null,
+      "index": 0,
+      "logprobs": null
+    }
+  ],
+  "created": 1758163874,
+  "model": "ondevice",
+  "object": "chat.completion.chunk",
+  "service_tier": null,
+  "system_fingerprint": null,
+  "usage": null
+}
+{
+  "id": "chatcmpl-22CD6ACAAC524733AE3416A3DEFFE093",
+  "choices": [
+    {
+      "delta": {
+        "content": "\"Apple is a technology company known for its innovative products\"",
+        "function_call": null,
+        "refusal": null,
+        "role": null,
+        "tool_calls": null
+      },
+      "finish_reason": null,
+      "index": 0,
+      "logprobs": null
+    }
+  ],
+  "created": 1758163874,
+  "model": "ondevice",
+  "object": "chat.completion.chunk",
+  "service_tier": null,
+  "system_fingerprint": null,
+  "usage": null
+}
+{
+  "id": "chatcmpl-22CD6ACAAC524733AE3416A3DEFFE093",
+  "choices": [
+    {
+      "delta": {
+        "content": " including the iPhone, iPad, Mac, and\"",
+        "function_call": null,
+        "refusal": null,
+        "role": null,
+        "tool_calls": null
+      },
+      "finish_reason": null,
+      "index": 0,
+      "logprobs": null
+    }
+  ],
+  "created": 1758163874,
+  "model": "ondevice",
+  "object": "chat.completion.chunk",
+  "service_tier": null,
+  "system_fingerprint": null,
+  "usage": null
+}
+{
+  "id": "chatcmpl-22CD6ACAAC524733AE3416A3DEFFE093",
+  "choices": [
+    {
+      "delta": {
+        "content": "services like the App Store and Apple Music.\"",
+        "function_call": null,
+        "refusal": null,
+        "role": null,
+        "tool_calls": null
+      },
+      "finish_reason": null,
+      "index": 0,
+      "logprobs": null
+    }
+  ],
+  "created": 1758163874,
+  "model": "ondevice",
+  "object": "chat.completion.chunk",
+  "service_tier": null,
+  "system_fingerprint": null,
+  "usage": null
+}
+{
+  "id": "chatcmpl-22CD6ACAAC524733AE3416A3DEFFE093",
+  "choices": [
+    {
+      "delta": {
+        "content": null,
+        "function_call": null,
+        "refusal": null,
+        "role": null,
+        "tool_calls": null
+      },
+      "finish_reason": "stop",
+      "index": 0,
+      "logprobs": null
+    }
+  ],
+  "created": 1758163874,
+  "model": "ondevice",
+  "object": "chat.completion.chunk",
+  "service_tier": null,
+  "system_fingerprint": null,
+  "usage": null
+}
+
+=== Invalid Schema ===
+Error code: 400 - {'error': {'message': 'response_format.json_schema type unknown is unsupported'}}
+
+All tests completed successfully.
