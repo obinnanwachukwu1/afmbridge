@@ -186,44 +186,61 @@ private func buildToolCatalogInstruction(toolSpecs: [ToolSpec]) -> String? {
   return lines.joined(separator: "\n")
 }
 
+private func requiredArguments(for spec: ToolSpec) -> [String] {
+  guard
+    let params = spec.function.parameters,
+    case let .object(dict) = params,
+    let required = dict["required"]?.arrayValue
+  else {
+    return []
+  }
+  return required.compactMap { $0.stringValue }
+}
+
+private func describeRequiredArguments(for spec: ToolSpec) -> String? {
+  let required = requiredArguments(for: spec)
+  guard !required.isEmpty else { return nil }
+  let joined = required.joined(separator: ", ")
+  return "- \(spec.function.name) requires: \(joined)."
+}
+
 private func buildToolsInstruction(toolSpecs: [ToolSpec], choice: ToolChoice?) -> String {
   if case .none? = choice {
     return "Tool calling is disabled for this request. Respond directly to the user in natural language without mentioning tools or function calls."
   }
 
   var lines: [String] = []
-  lines.append("Decide whether a function call is required. If so, select the appropriate function and provide arguments that allow it to run successfully.")
-  lines.append("Represent each decision as an entry in the tool_calls list (id, type \"function\", function name and arguments). Leave tool_calls empty when no function is needed.")
-  lines.append("If the user explicitly requests a tool or function by name, or asks you to call a tool, you must include that function in tool_calls with appropriate arguments before returning.")
-  lines.append("Arguments must include every required field from the schema. Do not emit empty objects or omit mandatory keys.")
-  lines.append("Example tool_calls entry: [ { \"id\": \"call_read\", \"type\": \"function\", \"function\": { \"name\": \"read_file\", \"arguments\": { \"path\": \"calculator.py\" } } } ]")
+  lines.append("WORKFLOW")
+  lines.append("1. Briefly state the planned change.")
+  lines.append("2. Emit a single tool call in tool_calls with complete arguments. If more work is needed, wait for the next turn.")
+  lines.append("3. Stop after producing the JSON.")
+  lines.append("")
+  lines.append("ARGUMENT REQUIREMENTS")
+  lines.append("- Every tool call must include all required fields with concrete, non-empty values.")
+  lines.append("- Reject placeholder values such as \"diff_calculator.patch\"; provide an actual unified diff string.")
 
   if case .function(let name)? = choice {
-    lines.append("You must call the function named \(name) before returning a final answer.")
+    lines.append("- You must include a call to \(name) before finishing the plan.")
   }
 
-  if toolSpecs.isEmpty {
-    lines.append("No callable functions are available for this request.")
-  } else {
-    lines.append("Available functions:")
-    for tool in toolSpecs {
-      guard tool.type == "function" else { continue }
-      let function = tool.function
-      lines.append("- name: \(function.name)")
-      if let description = function.description, !description.isEmpty {
-        lines.append("  description: \(description)")
-      }
-      if let params = function.parameters, let schemaText = prettyJSONString(from: params) {
-        lines.append("  parameters schema: \n\(schemaText)")
-        if case let .object(dict) = params,
-           let required = dict["required"]?.arrayValue,
-           !required.isEmpty {
-          let requiredList = required.compactMap { $0.stringValue }.joined(separator: ", ")
-          lines.append("  required arguments: \(requiredList)")
-        }
+  if !toolSpecs.isEmpty {
+    var requirementLines: [String] = []
+    for spec in toolSpecs where spec.type == "function" {
+      if let description = describeRequiredArguments(for: spec) {
+        requirementLines.append("  \(description)")
       }
     }
+    if !requirementLines.isEmpty {
+      lines.append("- Required arguments per tool:")
+      lines.append(contentsOf: requirementLines)
+    }
   }
+
+  lines.append("")
+  lines.append("FORMAT REMINDERS")
+  lines.append("- Represent each decision as an entry in tool_calls (id, type \"function\", function { name, arguments }).")
+  lines.append("- Leave tool_calls empty only when no tool use is required.")
+  lines.append("- Example entry: [ { \"id\": \"call_read\", \"type\": \"function\", \"function\": { \"name\": \"read_file\", \"arguments\": { \"path\": \"calculator.py\" } } } ]")
 
   return lines.joined(separator: "\n")
 }
@@ -386,6 +403,7 @@ TOOL PROTOCOL
 - read_file arguments MUST be exactly {"path": "calculator.py"}.
 - apply_patch arguments MUST include both "path" and "diff" keys. Target calculator.py and provide a complete unified diff string.
 - run_tests arguments MUST be {"command": "python -m pytest"} unless instructed otherwise.
+- Emit at most one tool call in each plan. If additional tools are required, wait for a follow-up turn.
 - Follow the sequence read_file -> apply_patch -> read_file -> run_tests when appropriate.
 
 OUTPUT FORMAT
@@ -416,8 +434,17 @@ OUTPUT FORMAT
 
 WORKFLOW
 1. Briefly state the planned change.
-2. Emit the tool_calls JSON described above with full arguments.
+2. Emit a single tool call in tool_calls with complete arguments. If more work is needed, wait for the next turn.
 3. Stop after producing the JSON.
+
+EXAMPLE SESSION
+Assistant: Plan: inspect factorial.
+Assistant tool_calls -> read_file with {"path":"calculator.py"}.
+Assistant: Plan: implement factorial iteratively.
+Assistant tool_calls -> apply_patch with {"path":"calculator.py","diff":"--- calculator.py\n+++ calculator.py\n@@\n-raise NotImplementedError(...)\n+...new code...\n"}.
+Assistant: Plan: verify edits.
+Assistant tool_calls -> read_file with {"path":"calculator.py"}.
+Assistant: Summary + tests checklist.
 """
 
     let model = SystemLanguageModel.default

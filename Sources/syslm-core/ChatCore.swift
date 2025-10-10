@@ -3,6 +3,21 @@
 import Foundation
 import FoundationModels
 
+private enum PlannerConfig {
+  // Temporary compatibility toggle; remove once structured planning is stable in production.
+  static var useStructuredToolPlanning: Bool {
+    guard let rawValue = ProcessInfo.processInfo.environment["SYSLM_ENABLE_STRUCTURED_TOOL_PLANNING"] else {
+      return false
+    }
+    switch rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+    case "0", "false", "no", "off":
+      return false
+    default:
+      return true
+    }
+  }
+}
+
 public enum ChatEngineError: Error, CustomStringConvertible {
   case emptyMessages
   case modelUnavailable(String)
@@ -884,6 +899,110 @@ private func makeOpenAIStyleToolCallID() -> String {
   return "call_" + String(characters)
 }
 
+private func sanitizeToolCallID(_ rawID: String?) -> String {
+  guard let rawID, !rawID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+    return makeOpenAIStyleToolCallID()
+  }
+
+  let trimmed = rawID.trimmingCharacters(in: .whitespacesAndNewlines)
+  let suffix = trimmed.hasPrefix("call_") ? trimmed.dropFirst(5) : trimmed[trimmed.startIndex...]
+
+  let isAlphanumeric = suffix.allSatisfy { $0.isLetter || $0.isNumber }
+  if trimmed.hasPrefix("call_"), isAlphanumeric, suffix.count >= 8, suffix.count <= 48 {
+    return trimmed
+  }
+
+  if isAlphanumeric, suffix.count >= 12, suffix.count <= 48 {
+    return "call_" + suffix
+  }
+
+  return makeOpenAIStyleToolCallID()
+}
+
+private func decodeEscapedJSON(_ text: String) -> String {
+  let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+  guard trimmed.hasPrefix("\"") && trimmed.hasSuffix("\"") else { return text }
+  if let data = trimmed.data(using: .utf8),
+     let decoded = try? JSONDecoder().decode(String.self, from: data) {
+    return decoded
+  }
+  return text
+}
+
+private func normalizeToolPlanText(_ text: String) -> String {
+  var working = stripJSONCodeFence(text)
+  working = decodeEscapedJSON(working)
+  working = working.trimmingCharacters(in: .whitespacesAndNewlines)
+
+  guard !working.isEmpty else { return working }
+
+  if working.hasPrefix("[") {
+    return "{\"tool_calls\": \(working)}"
+  }
+
+  if working.hasPrefix("{") {
+    if let data = working.data(using: .utf8),
+       let json = try? JSONSerialization.jsonObject(with: data, options: []) {
+      let wrapped = wrapToolPlanJSONObject(json)
+      if JSONSerialization.isValidJSONObject(wrapped),
+         let wrappedData = try? JSONSerialization.data(withJSONObject: wrapped, options: [.withoutEscapingSlashes]) {
+        return String(data: wrappedData, encoding: .utf8) ?? working
+      }
+    }
+  }
+
+  return working
+}
+
+private func wrapToolPlanJSONObject(_ json: Any) -> Any {
+  if let dict = json as? [String: Any] {
+    if dict["tool_calls"] != nil { return dict }
+    if dict["function"] != nil {
+      return ["tool_calls": [dict]]
+    }
+    if let array = dict["tool_calls"] as? [[String: Any]] {
+      return ["tool_calls": array]
+    }
+  } else if let array = json as? [[String: Any]] {
+    return ["tool_calls": array]
+  } else if let array = json as? [Any] {
+    let filtered = array.compactMap { $0 as? [String: Any] }
+    if filtered.count == array.count {
+      return ["tool_calls": filtered]
+    }
+  }
+  return json
+}
+
+private func buildToolPlanningSystemPrompt() -> String {
+  """
+  You are a focused assistant. Keep replies on-task and avoid unnecessary chit-chat.
+
+  TOOL PROTOCOL
+  - Decide whether a tool call is necessary. If you call one, include every required argument with specific, non-empty values.
+  - Emit at most one tool call per turn. Wait for the next turn before calling additional tools.
+  - If no tool is needed, respond directly without emitting tool_calls.
+
+  OUTPUT FORMAT
+  - Respond with valid JSON containing a top-level "tool_calls" array.
+  - Each entry must be:
+    {
+      "id": "call_identifier",
+      "type": "function",
+      "function": {
+        "name": "tool_name",
+        "arguments": { ... }
+      }
+    }
+  - Arguments must include every required field with meaningful values (no empty objects or placeholder strings).
+
+  WORKFLOW
+  1. State your immediate plan in one concise sentence.
+  2. If a tool is required, emit exactly one tool call following the format above.
+  3. Stop after producing the JSON plan.
+  """
+}
+
 func buildToolsInstruction(
   toolSpecs: [InputPayload.ToolSpec],
   choice: InputPayload.ToolChoice?
@@ -893,40 +1012,25 @@ func buildToolsInstruction(
   }
 
   var lines: [String] = []
-  lines.append("Decide whether a function call is required. If so, select the appropriate function and provide arguments that allow it to run successfully.")
-  lines.append("Represent each decision as an entry in the tool_calls list (id, type \"function\", function name and arguments). Leave tool_calls empty when no function is needed.")
-  lines.append("If the user explicitly requests a tool or function by name, or asks you to call a tool, you must include that function in tool_calls with appropriate arguments before returning.")
-  lines.append("Arguments must include every required field from the schema. Do not emit empty objects or omit mandatory keys.")
-  lines.append("Example tool_calls entry: [ { \"id\": \"call_read\", \"type\": \"function\", \"function\": { \"name\": \"read_file\", \"arguments\": { \"path\": \"calculator.py\" } } } ]")
+  lines.append("WORKFLOW")
+  lines.append("1. Summarize the planned change in one short sentence.")
+  lines.append("2. If a tool is needed, emit exactly one entry in tool_calls with the function name and full arguments. Otherwise leave tool_calls empty.")
+  lines.append("3. Stop after producing the JSON plan.")
+  lines.append("")
+  lines.append("ARGUMENT REQUIREMENTS")
+  lines.append("- Include all required fields with concrete values; do not emit empty objects or placeholder text.")
 
-  switch choice {
-  case .function(let name)?:
-    lines.append("You must call the function named \(name) before returning a final answer.")
-  default:
-    break
+  if case .function(let name)? = choice {
+    lines.append("- You must include a call to \(name) before finishing the plan.")
   }
 
-  if toolSpecs.isEmpty {
-    lines.append("No callable functions are available for this request.")
-  } else {
-    lines.append("Available functions:")
-    for tool in toolSpecs {
-      guard tool.type == "function" else { continue }
-      let function = tool.function
-      lines.append("- name: \(function.name)")
-      if let description = function.description, !description.isEmpty {
-        lines.append("  description: \(description)")
-      }
-      if let params = function.parameters, let schemaText = prettyJSONString(from: params) {
-        lines.append("  parameters schema: \n\(schemaText)")
-        if case let .object(dict) = params,
-           let required = dict["required"]?.arrayValue,
-           !required.isEmpty {
-          let requiredList = required.compactMap { $0.stringValue }.joined(separator: ", ")
-          lines.append("  required arguments: \(requiredList)")
-        }
-      }
-    }
+  lines.append("")
+  lines.append("FORMAT REMINDERS")
+  lines.append("- Represent the decision as an entry in tool_calls (id, type \"function\", function { name, arguments }).")
+  lines.append("- Leave tool_calls empty only when the next response should be natural language.")
+
+  if !toolSpecs.isEmpty {
+    lines.append("- Example structure: { \"tool_calls\": [ { \"id\": \"call_example\", \"type\": \"function\", \"function\": { \"name\": \"tool_name\", \"arguments\": { ... } } } ] }")
   }
 
   return lines.joined(separator: "\n")
@@ -945,6 +1049,76 @@ func buildToolCatalogInstruction(toolSpecs: [InputPayload.ToolSpec]) -> String? 
     lines.append(entry)
   }
   return lines.joined(separator: "\n")
+}
+
+private func requiredArguments(for spec: InputPayload.ToolSpec) -> [String] {
+  guard
+    let params = spec.function.parameters,
+    case let .object(dict) = params,
+    let required = dict["required"]?.arrayValue
+  else {
+    return []
+  }
+  return required.compactMap { $0.stringValue }
+}
+
+private func isMeaningfulArgumentValue(_ value: JSONValue) -> Bool {
+  switch value {
+  case .null:
+    return false
+  case .string(let text):
+    return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+  case .array(let array):
+    return !array.isEmpty
+  case .object(let object):
+    return !object.isEmpty
+  default:
+    return true
+  }
+}
+
+private func missingRequiredArguments(in call: ToolPlan.Call, spec: InputPayload.ToolSpec) -> [String] {
+  let required = requiredArguments(for: spec)
+  guard !required.isEmpty else { return [] }
+  guard let arguments = call.function.arguments.objectValue else { return required }
+  return required.filter { key in
+    guard let value = arguments[key] else { return true }
+    return !isMeaningfulArgumentValue(value)
+  }
+}
+
+private func validateToolPlan(_ plan: ToolPlan, toolSpecs: [InputPayload.ToolSpec]) throws -> ToolPlan {
+  guard !plan.tool_calls.isEmpty else {
+    throw ChatEngineError.invalidSchema("tool planning produced no tool_calls")
+  }
+
+  if plan.tool_calls.count > 1 {
+    throw ChatEngineError.invalidSchema("tool planning emitted multiple tool calls; only one is allowed per turn")
+  }
+
+  let catalog = Dictionary(uniqueKeysWithValues: toolSpecs.compactMap { spec -> (String, InputPayload.ToolSpec)? in
+    guard spec.type == "function" else { return nil }
+    return (spec.function.name, spec)
+  })
+
+  for call in plan.tool_calls {
+    let toolName = call.function.name
+    guard let spec = catalog[toolName] else {
+      throw ChatEngineError.invalidSchema("tool planning requested unknown tool \(toolName)")
+    }
+
+    if let type = call.type?.lowercased(), type != "function" {
+      throw ChatEngineError.invalidSchema("tool planning emitted unsupported call type \(type)")
+    }
+
+    let missing = missingRequiredArguments(in: call, spec: spec)
+    if !missing.isEmpty {
+      let list = missing.joined(separator: ", ")
+      throw ChatEngineError.invalidSchema("tool planning missing required arguments for \(toolName): \(list)")
+    }
+  }
+
+  return plan
 }
 
 private func normalizeArgumentsString(_ raw: String) -> String {
@@ -1046,8 +1220,8 @@ private func extractToolCallsFromLooseContent(_ text: String) -> ([ChatCompletio
      case let .object(dict) = json,
      let array = dict["tool_calls"]?.arrayValue {
     let calls = array.compactMap(makeToolCall(from:))
-    if !calls.isEmpty {
-      return (calls, nil)
+    if let first = calls.first {
+      return ([first], nil)
     }
   }
   return ([], text)
@@ -1059,12 +1233,20 @@ private func decodeToolPlan(from content: Any) throws -> ToolPlan {
   if let generated = content as? GeneratedContent {
     let (text, json) = renderStructuredContent(from: generated)
     if let json {
-      let data = try JSONEncoder().encode(json)
-      if let plan = try? JSONDecoder().decode(ToolPlan.self, from: data) {
+      let anyJSON = wrapToolPlanJSONObject(json.toAny())
+      if JSONSerialization.isValidJSONObject(anyJSON),
+         let data = try? JSONSerialization.data(withJSONObject: anyJSON, options: [.withoutEscapingSlashes]),
+         let plan = try? JSONDecoder().decode(ToolPlan.self, from: data) {
+        return plan
+      }
+      if let data = try? JSONEncoder().encode(json),
+         let plan = try? JSONDecoder().decode(ToolPlan.self, from: data) {
         return plan
       }
     }
-    if let data = text.data(using: .utf8), let plan = try? JSONDecoder().decode(ToolPlan.self, from: data) {
+    let normalized = normalizeToolPlanText(text)
+    if let data = normalized.data(using: .utf8),
+       let plan = try? JSONDecoder().decode(ToolPlan.self, from: data) {
       return plan
     }
   }
@@ -1084,23 +1266,38 @@ private func decodeToolPlan(from content: Any) throws -> ToolPlan {
   if let plan = content as? ToolPlan { return plan }
 
   if let jsonValue = content as? JSONValue {
+    let wrapped = wrapToolPlanJSONObject(jsonValue.toAny())
+    if JSONSerialization.isValidJSONObject(wrapped) {
+      let data = try JSONSerialization.data(withJSONObject: wrapped, options: [.withoutEscapingSlashes])
+      return try JSONDecoder().decode(ToolPlan.self, from: data)
+    }
     let data = try JSONEncoder().encode(jsonValue)
     return try JSONDecoder().decode(ToolPlan.self, from: data)
   }
 
   if let dict = content as? [String: Any], JSONSerialization.isValidJSONObject(dict) {
-    let data = try JSONSerialization.data(withJSONObject: dict, options: [])
+    let wrapped = wrapToolPlanJSONObject(dict)
+    guard JSONSerialization.isValidJSONObject(wrapped) else {
+      throw ChatEngineError.invalidSchema("Tool planning response has unsupported shape")
+    }
+    let data = try JSONSerialization.data(withJSONObject: wrapped, options: [])
     return try JSONDecoder().decode(ToolPlan.self, from: data)
   }
 
-  if let string = content as? String, let data = string.data(using: .utf8) {
-    return try JSONDecoder().decode(ToolPlan.self, from: data)
+  if let string = content as? String {
+    let normalized = normalizeToolPlanText(string)
+    if let data = normalized.data(using: .utf8) {
+      return try JSONDecoder().decode(ToolPlan.self, from: data)
+    }
   }
 
   // 3) Last-ditch: some types expose valid JSON via .description
   if let desc = (content as? CustomStringConvertible)?.description,
-     let data = desc.data(using: .utf8) {
-    return try JSONDecoder().decode(ToolPlan.self, from: data)
+     !desc.isEmpty {
+    let normalized = normalizeToolPlanText(desc)
+    if let data = normalized.data(using: .utf8) {
+      return try JSONDecoder().decode(ToolPlan.self, from: data)
+    }
   }
 
   if let lastError {
@@ -1417,7 +1614,10 @@ public struct ChatEngine {
 
       if hasTools {
         do {
-          var planningInstructions = prepared.baseInstructions
+          var planningInstructions: [String] = [buildToolPlanningSystemPrompt()]
+          if let catalog = buildToolCatalogInstruction(toolSpecs: prepared.declaredToolSpecs) {
+            planningInstructions.append(catalog)
+          }
           planningInstructions.append(buildToolsInstruction(toolSpecs: prepared.declaredToolSpecs, choice: prepared.effectiveToolChoice))
           fputs("[syslm-core] planning instructions count: \(planningInstructions.count)\n", stderr)
           let planningTranscript = makeTranscript(
@@ -1425,25 +1625,34 @@ public struct ChatEngine {
             extraInstructions: planningInstructions
           )
           let planningSession = LanguageModelSession(model: prepared.systemModel, tools: [], transcript: planningTranscript)
-          let planningSchema = try makeToolPlanningSchema(toolSpecs: prepared.declaredToolSpecs, choice: prepared.effectiveToolChoice)
           var planningOptions = options
           planningOptions.sampling = .greedy
           planningOptions.temperature = 0
           planningOptions.maximumResponseTokens = max(planningOptions.maximumResponseTokens ?? 0, 256)
 
-          let planningResponse = try await planningSession.respond(
-            to: prepared.promptContent,
-            schema: planningSchema,
-            includeSchemaInPrompt: true,
-            options: planningOptions
-          )
-
-          let rawPlanContent = planningResponse.content
+          let rawPlanContent: Any
+          if PlannerConfig.useStructuredToolPlanning {
+            let planningSchema = try makeToolPlanningSchema(toolSpecs: prepared.declaredToolSpecs, choice: prepared.effectiveToolChoice)
+            let planningResponse = try await planningSession.respond(
+              to: prepared.promptContent,
+              schema: planningSchema,
+              includeSchemaInPrompt: true,
+              options: planningOptions
+            )
+            rawPlanContent = planningResponse.content
+          } else {
+            let planningResponse = try await planningSession.respond(
+              to: prepared.promptContent,
+              options: planningOptions
+            )
+            rawPlanContent = planningResponse.content
+          }
           fputs("[syslm-core] raw tool plan content type=\(String(describing: type(of: rawPlanContent))) value=\(String(describing: rawPlanContent))\n", stderr)
-          let plan = try decodeToolPlan(from: rawPlanContent)
+          let decodedPlan = try decodeToolPlan(from: rawPlanContent)
+          let plan = try validateToolPlan(decodedPlan, toolSpecs: prepared.declaredToolSpecs)
           if !plan.tool_calls.isEmpty {
-            let toolCalls = plan.tool_calls.map { call -> ChatCompletionPayload.Choice.ToolCall in
-              let id = (call.id?.isEmpty == false) ? call.id! : makeOpenAIStyleToolCallID()
+            let toolCalls = plan.tool_calls.enumerated().map { _, call -> ChatCompletionPayload.Choice.ToolCall in
+              let id = sanitizeToolCallID(call.id)
               let type = (call.type?.isEmpty == false) ? call.type! : "function"
               fputs("[syslm-core] planned call name=\(call.function.name) arguments=\(call.function.arguments)\n", stderr)
               let argumentsText = canonicalJSONString(from: call.function.arguments)
@@ -1513,6 +1722,11 @@ public struct ChatEngine {
         if !extracted.isEmpty {
           responseContent = residual
         }
+      }
+
+      if combinedToolCalls.count > 1 {
+        warnings.append("tool planning attempted multiple tool calls; truncating to first entry")
+        combinedToolCalls = [combinedToolCalls[0]]
       }
 
       let generatedChoice = ChatCompletionPayload.Choice(
