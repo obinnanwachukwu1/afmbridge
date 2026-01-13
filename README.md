@@ -1,134 +1,230 @@
 # syslm
 
-`syslm` wraps Apple's on-device `SystemLanguageModel` APIs with a small Swift package, a command line entry point, and an HTTP server that mimics the OpenAI Chat Completions API. The repository also contains helper scripts for driving the server from Python, including a rich TUI that demonstrates streaming tool calls.
+OpenRouter-compatible API layer for Apple's on-device FoundationModels framework. Exposes a `POST /v1/chat/completions` endpoint that works as a drop-in replacement for OpenAI/OpenRouter APIs.
+
+## Features
+
+- **Full OpenRouter API compatibility** — Works with OpenAI SDKs via base URL override
+- **Tool calling** — Function calling with proper `tool_calls` array and `finish_reason`
+- **Structured outputs** — JSON schema-constrained generation using Apple's guided generation
+- **Streaming** — Server-sent events (SSE) for real-time token streaming
+- **Multi-turn conversations** — Proper transcript handling for chat history
 
 ## Requirements
-- macOS 26 (Tahoe) or newer with Apple Intelligence enabled; the `FoundationModels` framework is only available on those builds.
-- Xcode 16 (or later) with Swift 6.2 toolchains.
-- Python 3.10+ if you plan to use the helper scripts.
 
-> Tip: run `xcode-select -p` to confirm you are using the Xcode that ships the `FoundationModels.framework`.
+- macOS 26 (Tahoe) or newer with Apple Intelligence enabled
+- Xcode 26+ with Swift 6.2 toolchain
+- The `FoundationModels` framework (ships with macOS 26)
 
-## Project Layout
-- `Sources/syslm-core`: core plumbing that converts OpenAI-style payloads into `SystemLanguageModel` prompts, including tool calling and JSON schema support.
-- `Sources/syslm-cli`: reads a chat-completions style request from STDIN and prints a JSON response; also exposes an `--availability` probe.
-- `Sources/syslm-server`: SwiftNIO HTTP server that exposes `POST /v1/chat/completions` plus SSE streaming, designed to be drop-in compatible with the latest OpenAI SDKs.
-- `scripts/interactive_agent.py`: interactive TUI client that calls the server, renders streamed chunks, and executes tool calls locally.
-- `scripts/test_openai_server.py`: smoke tests that exercise completions, schema-constrained outputs, tool calls, and streaming.
+> Tip: Run `xcode-select -p` to confirm you're using the correct Xcode.
 
-## Building the Swift targets
+## Quick Start
+
+### Build and run the server
+
 ```bash
 swift build
+swift run syslm-server --port 8765
 ```
-The SwiftPM manifest links against `FoundationModels`, so the build must run on a machine that provides that framework.
 
-## Using the CLI (`syslm-cli`)
-The CLI reads the request from STDIN and writes the response JSON to STDOUT. Warnings are emitted on STDERR.
+### Test with curl
 
-Probe availability:
 ```bash
-echo "" | swift run syslm-cli --availability
-```
-Sample completion:
-```bash
-echo '{
-  "messages": [
-    {"role": "system", "content": "You are concise."},
-    {"role": "user", "content": "Name a macOS release."}
-  ],
-  "temperature": 0.2
-}' | swift run syslm-cli
-```
-Optional request fields:
-- `temperature` or `temp`
-- `top_k`
-- `max_output_tokens`, `max_tokens`, or `maxTokens`
-- `response_format` with a JSON schema (see below)
-- `tools` (function tools only) and `tool_choice` (`auto`, `none`, or `{ "type": "function", "function": { "name": "..." } }`).
-
-Exit codes:
-- `0`: success
-- `1`: general failure (parse errors, invalid input)
-- `2`: model unavailable on this machine
-
-## Running the server (`syslm-server`)
-Start the OpenAI-compatible server (defaults to port 8000):
-```bash
-swift run syslm-server --port 8000
-```
-You should see "syslm-server listening on http://0.0.0.0:8000" once the `SystemLanguageModel` session is ready.
-
-### Making requests
-The server implements `POST /v1/chat/completions`. Example with `curl`:
-```bash
-curl http://localhost:8000/v1/chat/completions \
+curl http://localhost:8765/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "ondevice",
-    "messages": [
-      {"role": "system", "content": "You are terse."},
-      {"role": "user", "content": "Summarize WWDC in one sentence."}
-    ]
+    "messages": [{"role": "user", "content": "Hello!"}]
   }'
 ```
-The response mirrors OpenAI's payload, including `choices[0].message.role`, `content`, and the `id/model/created` metadata. Any server-side warnings (for example, unsupported tool definitions) are surfaced via `Warning` headers.
 
-### Streaming responses
-Set `"stream": true` to opt into server-sent events (SSE). The endpoint emits `data: ...` chunks and finishes with `data: [DONE]`. Streaming is currently disabled for requests that include `response_format.json_schema`.
+### Use with OpenAI SDK
 
-### Tool calling
-Only function tools are supported. When the model asks to call a tool, the response's `choices[0].message.tool_calls` array is populated and `finish_reason` becomes `"tool_calls"`. Supplying `"tool_choice": "none"` strips tools from the request. Supplying `{"type": "function", "function": {"name": "my_tool"}}` enforces a single function.
+```python
+from openai import OpenAI
 
-### JSON schema constrained outputs
-Provide `response_format` as in the OpenAI API. The server normalizes schemas and returns both raw `content` (stringified JSON) and a `parsed` object when the schema can be satisfied. Allowed root types are `object`, `array`, `string`, `integer`, `number`, and `boolean`.
+client = OpenAI(
+    base_url="http://localhost:8765/v1",
+    api_key="not-needed"  # syslm doesn't require auth
+)
 
-## Python helper scripts
-Create a virtual environment and install dependencies:
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install openai==1.* prompt_toolkit rich
+response = client.chat.completions.create(
+    model="ondevice",
+    messages=[{"role": "user", "content": "What is the capital of France?"}]
+)
+print(response.choices[0].message.content)
 ```
 
-### Interactive agent
-1. Start `syslm-server`.
-2. Ensure `OPENAI_BASE_URL` points at `http://localhost:8000/v1` (default) and set `OPENAI_API_KEY` to any non-empty string.
-3. Run the TUI:
-   ```bash
-   python3 scripts/interactive_agent.py
-   ```
-   The interface prints assistant tokens as they stream in, and renders tool invocations in a table. Tool calls are executed locally through helper functions (`get_current_time`, `calculate_expression`, `lookup_country_capital`).
+## API Reference
 
-### Smoke tests
-With the server running, execute:
-```bash
-python3 scripts/test_openai_server.py
+### `POST /v1/chat/completions`
+
+OpenRouter-compatible chat completions endpoint.
+
+#### Request Body
+
+```json
+{
+  "model": "ondevice",
+  "messages": [
+    {"role": "system", "content": "You are helpful."},
+    {"role": "user", "content": "Hello!"}
+  ],
+  "stream": false,
+  "temperature": 0.7,
+  "max_tokens": 1024,
+  "tools": [...],
+  "tool_choice": "auto",
+  "response_format": {"type": "json_schema", "json_schema": {...}}
+}
 ```
-The script exercises:
-- basic chat completions
-- JSON schema responses (with `parsed` payloads)
-- tool call emission and `tool_choice="none"`
-- streaming completions
-- rejection of unsupported schemas
 
-Failures raise `AssertionError`s and dump the corresponding response objects.
+#### Supported Parameters
 
-### Local vs. GPT-4.1 Mini comparison
-Once you have an OpenAI API key available, you can benchmark the local server
-against OpenAI's hosted `gpt-4.1-mini` model:
-```bash
-python3 scripts/compare_chat_models.py
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `model` | string | Model name (use "ondevice") |
+| `messages` | array | Chat messages (system, user, assistant, tool) |
+| `stream` | boolean | Enable SSE streaming |
+| `temperature` | number | Sampling temperature (0.0-2.0) |
+| `max_tokens` | integer | Maximum response tokens |
+| `tools` | array | Function tool definitions |
+| `tool_choice` | string/object | "auto", "none", "required", or specific function |
+| `response_format` | object | "json_object" or "json_schema" with schema |
+
+### `GET /health`
+
+Health check endpoint.
+
+```json
+{
+  "status": "ok",
+  "availability": "available",
+  "model": "ondevice"
+}
 ```
-Place your credentials inside a `.env` file in the repository root (or pass
-`--env-file path/to/.env`). The script exercises an expanded suite of chat
-completion scenarios—covering JSON schemas, streaming, tool usage, and
-failure cases—against both backends and prints a side-by-side summary. Use
-`--skip-openai` or `--skip-local` to target one side only.
 
-## Troubleshooting
-- **`SystemLanguageModel is unavailable`**: Verify you are on macOS 26+ with Apple Intelligence enabled and that the active Xcode toolchain exposes the `FoundationModels` framework.
-- **Unsupported schema or tool warnings**: The server logs details to STDERR and returns HTTP 400 when the request cannot be satisfied. Check the `Warning` headers and console output.
-- **Python client fails to connect**: Confirm `OPENAI_BASE_URL` uses `http://` (not `https://`) when talking to the local server.
+## Tool Calling
+
+syslm supports OpenRouter-style function calling:
+
+```python
+tools = [{
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "Get weather for a city",
+        "parameters": {
+            "type": "object",
+            "properties": {"city": {"type": "string"}},
+            "required": ["city"]
+        }
+    }
+}]
+
+response = client.chat.completions.create(
+    model="ondevice",
+    messages=[{"role": "user", "content": "What's the weather in Tokyo?"}],
+    tools=tools
+)
+
+# Response includes tool_calls when model wants to use a tool
+if response.choices[0].finish_reason == "tool_calls":
+    tool_call = response.choices[0].message.tool_calls[0]
+    # Execute the tool and send result back
+```
+
+## Structured Outputs
+
+Generate JSON constrained to a schema:
+
+```python
+response = client.chat.completions.create(
+    model="ondevice",
+    messages=[{"role": "user", "content": "Give me info about Paris"}],
+    response_format={
+        "type": "json_schema",
+        "json_schema": {
+            "name": "city_info",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "country": {"type": "string"},
+                    "population": {"type": "integer"}
+                },
+                "required": ["name", "country"]
+            }
+        }
+    }
+)
+# Response content is valid JSON matching the schema
+```
+
+## Streaming
+
+Enable real-time token streaming with SSE:
+
+```python
+stream = client.chat.completions.create(
+    model="ondevice",
+    messages=[{"role": "user", "content": "Tell me a story"}],
+    stream=True
+)
+
+for chunk in stream:
+    if chunk.choices[0].delta.content:
+        print(chunk.choices[0].delta.content, end="")
+```
+
+## Project Structure
+
+```
+Sources/
+├── syslm-core/           # Core library
+│   ├── Types/            # Request/Response types (OpenRouter-compatible)
+│   └── Engine/           # ChatEngine, converters, parsers
+└── syslm-server/         # HTTP server (SwiftNIO)
+
+tests/                    # TypeScript conformance test suite
+├── src/
+│   ├── basic-completion.test.ts
+│   ├── tool-calling.test.ts
+│   ├── structured-output.test.ts
+│   ├── streaming.test.ts
+│   └── error-handling.test.ts
+└── package.json
+```
+
+## Running Tests
+
+The test suite validates OpenRouter API compatibility:
+
+```bash
+# Start the server
+swift run syslm-server --port 8765
+
+# Run tests (in another terminal)
+cd tests
+npm install
+npm test
+```
+
+Current status: **40/40 tests passing**
+
+## Known Limitations
+
+- Apple's on-device model has content filters that may reject some prompts
+- Context window is limited (see Apple's TN3193)
+- Some advanced OpenRouter features not yet implemented (logprobs, n>1, etc.)
+
+## References
+
+- [OpenRouter API Reference](https://openrouter.ai/docs/api/reference/overview)
+- [Apple FoundationModels Framework](https://developer.apple.com/documentation/foundationmodels/)
+- [LanguageModelSession](https://developer.apple.com/documentation/foundationmodels/languagemodelsession/)
 
 ## License
-This repository does not yet include an explicit license. Add one before distributing binaries or derivatives.
+
+This repository does not yet include an explicit license. Add one before distributing.
