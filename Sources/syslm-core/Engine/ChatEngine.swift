@@ -109,10 +109,25 @@ public struct ChatEngine: Sendable {
             toolChoice: request.toolChoice
         )
         
+        // Calculate token usage
+        let promptTokens = TokenEstimator.estimatePromptTokens(
+            messages: request.messages,
+            instructions: instructions
+        )
+        let completionTokens = TokenEstimator.estimateCompletionTokens(
+            content: parseResult.content,
+            toolCalls: parseResult.toolCalls
+        )
+        let usage = TokenEstimator.buildUsage(
+            promptTokens: promptTokens,
+            completionTokens: completionTokens
+        )
+        
         // Build the final response
         return buildChatCompletionResponse(
             parseResult: parseResult,
-            model: request.model ?? "ondevice"
+            model: request.model ?? "ondevice",
+            usage: usage
         )
     }
     
@@ -211,10 +226,12 @@ public struct ChatEngine: Sendable {
                     }()
                     
                     var finishReason: FinishReason = .stop
+                    var parsedToolCalls: [ToolCall]? = nil
                     
                     if hasTools && !toolChoiceIsNone {
                         let parseResult = ToolCallParser.parse(fullContent, declaredTools: capturedRequest.tools!)
                         if let toolCalls = parseResult.toolCalls {
+                            parsedToolCalls = toolCalls
                             // Stream tool call chunks
                             for (index, toolCall) in toolCalls.enumerated() {
                                 let streamToolCall = StreamToolCall(
@@ -250,7 +267,21 @@ public struct ChatEngine: Sendable {
                         }
                     }
                     
-                    // Send final chunk with finish_reason
+                    // Calculate usage for final chunk
+                    let promptTokens = TokenEstimator.estimatePromptTokens(
+                        messages: capturedRequest.messages,
+                        instructions: instructions
+                    )
+                    let completionTokens = TokenEstimator.estimateCompletionTokens(
+                        content: finishReason == .toolCalls ? nil : fullContent,
+                        toolCalls: parsedToolCalls
+                    )
+                    let usage = TokenEstimator.buildUsage(
+                        promptTokens: promptTokens,
+                        completionTokens: completionTokens
+                    )
+                    
+                    // Send final chunk with finish_reason and usage
                     let finalChunk = StreamChunk(
                         id: responseId,
                         object: "chat.completion.chunk",
@@ -263,7 +294,7 @@ public struct ChatEngine: Sendable {
                                 finishReason: finishReason
                             )
                         ],
-                        usage: nil
+                        usage: usage
                     )
                     continuation.yield(finalChunk)
                     continuation.finish()
@@ -457,7 +488,8 @@ public struct ChatEngine: Sendable {
     /// Build the final chat completion response
     private func buildChatCompletionResponse(
         parseResult: ParseResult,
-        model: String
+        model: String,
+        usage: Usage?
     ) -> ChatCompletionResponse {
         let responseId = generateResponseId()
         let created = Int(Date().timeIntervalSince1970)
@@ -492,7 +524,7 @@ public struct ChatEngine: Sendable {
             created: created,
             model: model,
             choices: [choice],
-            usage: nil
+            usage: usage
         )
     }
     
@@ -588,4 +620,95 @@ struct ParseResult: Sendable {
     let content: String?
     let toolCalls: [ToolCall]?
     let finishReason: FinishReason
+}
+
+// MARK: - Token Estimation
+
+/// Estimates token counts for usage tracking.
+/// Apple's FoundationModels doesn't expose exact token counts, so we estimate.
+/// Approximation: ~4 characters per token for English text (conservative estimate).
+enum TokenEstimator {
+    
+    /// Characters per token ratio (conservative for English)
+    private static let charsPerToken: Double = 4.0
+    
+    /// Estimate tokens for a string
+    static func estimateTokens(_ text: String) -> Int {
+        guard !text.isEmpty else { return 0 }
+        return max(1, Int(ceil(Double(text.count) / charsPerToken)))
+    }
+    
+    /// Estimate tokens for messages (prompt tokens)
+    static func estimatePromptTokens(messages: [Message], instructions: String?) -> Int {
+        var totalChars = 0
+        
+        // Count message content
+        for message in messages {
+            // Role overhead (~4 tokens per message for role/formatting)
+            totalChars += 16
+            
+            // Content
+            if let content = message.content?.textValue {
+                totalChars += content.count
+            }
+            
+            // Tool calls in assistant messages
+            if let toolCalls = message.toolCalls {
+                for call in toolCalls {
+                    totalChars += call.id.count
+                    totalChars += call.function.name.count
+                    totalChars += call.function.arguments.count
+                    totalChars += 40 // JSON structure overhead
+                }
+            }
+            
+            // Tool call ID for tool messages
+            if let toolCallId = message.toolCallId {
+                totalChars += toolCallId.count
+            }
+            
+            // Name field
+            if let name = message.name {
+                totalChars += name.count
+            }
+        }
+        
+        // Instructions (system prompt + tool catalog)
+        if let instructions = instructions {
+            totalChars += instructions.count
+        }
+        
+        return max(1, Int(ceil(Double(totalChars) / charsPerToken)))
+    }
+    
+    /// Estimate tokens for completion (response tokens)
+    static func estimateCompletionTokens(content: String?, toolCalls: [ToolCall]?) -> Int {
+        var totalChars = 0
+        
+        // Text content
+        if let content = content {
+            totalChars += content.count
+        }
+        
+        // Tool calls
+        if let toolCalls = toolCalls {
+            for call in toolCalls {
+                totalChars += call.id.count
+                totalChars += call.function.name.count
+                totalChars += call.function.arguments.count
+                totalChars += 40 // JSON structure overhead
+            }
+        }
+        
+        return max(1, Int(ceil(Double(totalChars) / charsPerToken)))
+    }
+    
+    /// Build a Usage object from prompt and completion token counts
+    static func buildUsage(promptTokens: Int, completionTokens: Int) -> Usage {
+        Usage(
+            promptTokens: promptTokens,
+            completionTokens: completionTokens,
+            totalTokens: promptTokens + completionTokens
+        )
+    }
 }

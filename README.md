@@ -7,8 +7,9 @@ OpenRouter-compatible API layer for Apple's on-device FoundationModels framework
 - **Full OpenRouter API compatibility** — Works with OpenAI SDKs via base URL override
 - **Tool calling** — Function calling with proper `tool_calls` array and `finish_reason`
 - **Structured outputs** — JSON schema-constrained generation using Apple's guided generation
-- **Streaming** — Server-sent events (SSE) for real-time token streaming
-- **Multi-turn conversations** — Proper transcript handling for chat history
+- **Streaming** — Server-sent events (SSE) for real-time streaming
+- **Multiple transports** — HTTP server, Unix socket RPC, or direct in-process
+- **CLI tool** — Interactive REPL and one-shot queries
 
 ## Requirements
 
@@ -16,26 +17,52 @@ OpenRouter-compatible API layer for Apple's on-device FoundationModels framework
 - Xcode 26+ with Swift 6.2 toolchain
 - The `FoundationModels` framework (ships with macOS 26)
 
-> Tip: Run `xcode-select -p` to confirm you're using the correct Xcode.
-
 ## Quick Start
 
-### Build and run the server
+### Build
 
 ```bash
 swift build
-swift run syslm-server --port 8765
 ```
 
-### Test with curl
+### HTTP Server
+
+```bash
+swift run syslm-server --port 8765
+```
 
 ```bash
 curl http://localhost:8765/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "ondevice",
-    "messages": [{"role": "user", "content": "Hello!"}]
-  }'
+  -d '{"messages": [{"role": "user", "content": "Hello!"}]}'
+```
+
+### CLI Tool
+
+```bash
+# One-shot query (direct mode)
+swift run syslm-cli "What is the capital of France?"
+
+# Streaming output
+swift run syslm-cli -s "Tell me a story"
+
+# Interactive REPL
+swift run syslm-cli -i
+
+# Connect via Unix socket (requires syslm-socket running)
+swift run syslm-cli --socket "Hello"
+```
+
+### Unix Socket Server
+
+For lower-latency IPC without HTTP overhead:
+
+```bash
+# Start socket server (default: /tmp/syslm.sock)
+swift run syslm-socket
+
+# Or specify a custom path
+swift run syslm-socket --socket /path/to/syslm.sock --verbose
 ```
 
 ### Use with OpenAI SDK
@@ -45,7 +72,7 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="http://localhost:8765/v1",
-    api_key="not-needed"  # syslm doesn't require auth
+    api_key="not-needed"
 )
 
 response = client.chat.completions.create(
@@ -83,7 +110,7 @@ OpenRouter-compatible chat completions endpoint.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `model` | string | Model name (use "ondevice") |
+| `model` | string | Model name (ignored, always uses on-device model) |
 | `messages` | array | Chat messages (system, user, assistant, tool) |
 | `stream` | boolean | Enable SSE streaming |
 | `temperature` | number | Sampling temperature (0.0-2.0) |
@@ -128,10 +155,9 @@ response = client.chat.completions.create(
     tools=tools
 )
 
-# Response includes tool_calls when model wants to use a tool
 if response.choices[0].finish_reason == "tool_calls":
     tool_call = response.choices[0].message.tool_calls[0]
-    # Execute the tool and send result back
+    print(f"Call {tool_call.function.name} with {tool_call.function.arguments}")
 ```
 
 ## Structured Outputs
@@ -159,12 +185,11 @@ response = client.chat.completions.create(
         }
     }
 )
-# Response content is valid JSON matching the schema
 ```
 
 ## Streaming
 
-Enable real-time token streaming with SSE:
+Enable real-time streaming with SSE:
 
 ```python
 stream = client.chat.completions.create(
@@ -175,26 +200,68 @@ stream = client.chat.completions.create(
 
 for chunk in stream:
     if chunk.choices[0].delta.content:
-        print(chunk.choices[0].delta.content, end="")
+        print(chunk.choices[0].delta.content, end="", flush=True)
 ```
+
+> **Note:** Apple's FoundationModels streams in batched chunks (roughly 6-8 tokens per chunk), not token-by-token. This is a platform limitation, not a bug.
 
 ## Project Structure
 
 ```
 Sources/
-├── syslm-core/           # Core library
-│   ├── Types/            # Request/Response types (OpenRouter-compatible)
-│   └── Engine/           # ChatEngine, converters, parsers
-└── syslm-server/         # HTTP server (SwiftNIO)
+├── syslm-core/              # Core library
+│   ├── Types/               # OpenRouter-compatible request/response types
+│   │   ├── Request.swift
+│   │   ├── Response.swift
+│   │   ├── StreamChunk.swift
+│   │   ├── JSONSchema.swift
+│   │   ├── JSONValue.swift
+│   │   └── Error.swift
+│   ├── Engine/              # Chat engine and converters
+│   │   ├── ChatEngine.swift
+│   │   ├── ToolCallParser.swift
+│   │   ├── SchemaConverter.swift
+│   │   └── OptionsConverter.swift
+│   └── Transport/           # Transport abstractions
+│       ├── ChatTransport.swift   # Protocol
+│       ├── DirectTransport.swift # In-process (wraps ChatEngine)
+│       ├── SocketTransport.swift # Unix socket client
+│       └── RPCProtocol.swift     # Binary wire protocol
+├── syslm-server/            # HTTP server (SwiftNIO)
+├── syslm-socket/            # Unix socket RPC server
+└── syslm-cli/               # Command-line interface
 
-tests/                    # TypeScript conformance test suite
+tests/                       # TypeScript conformance test suite
 ├── src/
 │   ├── basic-completion.test.ts
 │   ├── tool-calling.test.ts
 │   ├── structured-output.test.ts
 │   ├── streaming.test.ts
-│   └── error-handling.test.ts
+│   ├── error-handling.test.ts
+│   └── usage-tracking.test.ts
 └── package.json
+```
+
+## Transport Architecture
+
+syslm supports multiple transports for different use cases:
+
+| Transport | Use Case | Latency |
+|-----------|----------|---------|
+| `DirectTransport` | In-process, library usage | Lowest |
+| `SocketTransport` | IPC, CLI tools | Low |
+| HTTP Server | Network, SDK compatibility | Higher |
+
+```swift
+import syslm_core
+
+// Direct (in-process)
+let direct = try DirectTransport()
+let response = try await direct.send(request)
+
+// Socket (connects to syslm-socket server)
+let socket = try await SocketTransport(path: "/tmp/syslm.sock")
+let response = try await socket.send(request)
 ```
 
 ## Running Tests
@@ -211,20 +278,23 @@ npm install
 npm test
 ```
 
-Current status: **40/40 tests passing**
+Current status: **46/46 tests passing**
 
 ## Known Limitations
 
-- Apple's on-device model has content filters that may reject some prompts
-- Context window is limited (see Apple's TN3193)
-- Some advanced OpenRouter features not yet implemented (logprobs, n>1, etc.)
+- **Streaming granularity:** Apple's FoundationModels streams in batched chunks (~6-8 tokens), not individual tokens
+- **Content filters:** Apple's on-device model may reject some prompts
+- **Context window:** Limited context size (see Apple's TN3193)
+- **Token counts:** Usage stats are estimated (Apple doesn't expose actual token counts)
+- **Not implemented:** logprobs, n>1 completions, seed (deterministic sampling)
 
 ## References
 
 - [OpenRouter API Reference](https://openrouter.ai/docs/api/reference/overview)
 - [Apple FoundationModels Framework](https://developer.apple.com/documentation/foundationmodels/)
 - [LanguageModelSession](https://developer.apple.com/documentation/foundationmodels/languagemodelsession/)
+- [TN3193: Managing the Context Window](https://developer.apple.com/documentation/technotes/tn3193-managing-the-on-device-foundation-model-s-context-window/)
 
 ## License
 
-This repository does not yet include an explicit license. Add one before distributing.
+MIT
