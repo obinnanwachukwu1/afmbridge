@@ -1,6 +1,8 @@
-# afmbridge
+# afmbridge — Apple Foundation Model Bridge
 
 OpenRouter-compatible API layer for Apple's on-device FoundationModels framework. Exposes a `POST /v1/chat/completions` endpoint that works as a drop-in replacement for OpenAI/OpenRouter APIs.
+
+> **Disclaimer:** This project is not affiliated with, endorsed by, or associated with Apple Inc. or any of its subsidiaries. "Apple" and "FoundationModels" are trademarks of Apple Inc.
 
 ## Features
 
