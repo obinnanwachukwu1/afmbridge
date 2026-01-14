@@ -30,14 +30,26 @@ swift build
 ### HTTP Server
 
 ```bash
+# TCP port (default: 8000)
 swift run afmbridge-server --port 8765
+
+# Unix Domain Socket (for secure local IPC)
+swift run afmbridge-server --socket /tmp/myapp.sock
 ```
 
 ```bash
+# TCP request
 curl http://localhost:8765/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"messages": [{"role": "user", "content": "Hello!"}]}'
+
+# Unix socket request
+curl --unix-socket /tmp/myapp.sock http://localhost/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"messages": [{"role": "user", "content": "Hello!"}]}'
 ```
+
+> **Security:** Using `--socket` is more secure than TCP for local applications. File permissions control access, preventing other network users or applications from connecting.
 
 ### CLI Tool
 
@@ -248,11 +260,12 @@ tests/                       # TypeScript conformance test suite
 
 afmbridge supports multiple transports for different use cases:
 
-| Transport | Use Case | Latency |
-|-----------|----------|---------|
-| `DirectTransport` | In-process, library usage | Lowest |
-| `SocketTransport` | IPC, CLI tools | Low |
-| HTTP Server | Network, SDK compatibility | Higher |
+| Transport | Use Case | Latency | Security |
+|-----------|----------|---------|----------|
+| `DirectTransport` | In-process, library usage | Lowest | N/A |
+| `SocketTransport` | IPC, CLI tools (binary RPC) | Low | File permissions |
+| HTTP over Unix Socket | IPC with standard HTTP/JSON | Low | File permissions |
+| HTTP over TCP | Network, SDK compatibility | Higher | Network-exposed |
 
 ```swift
 import afmbridge_core

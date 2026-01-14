@@ -353,19 +353,24 @@ struct ServerApp {
             exit(2)
         }
         
+        let socketPath = parseSocket(from: CommandLine.arguments)
         let port = parsePort(from: CommandLine.arguments) ?? 8000
+        
+        // Warn if both are specified
+        if socketPath != nil && CommandLine.arguments.contains("--port") {
+            fputs("WARN: Both --socket and --port specified; using --socket\n", stderr)
+        }
         
         let threads = max(1, ProcessInfo.processInfo.activeProcessorCount)
         let group = MultiThreadedEventLoopGroup(numberOfThreads: threads)
-        defer {
-            group.shutdownGracefully { error in
-                if let error {
-                    fputs("WARN: Failed to shut down event loop group cleanly: \(error)\n", stderr)
-                }
-            }
+        
+        // Clean up socket file if it exists (from previous run)
+        if let socketPath = socketPath {
+            cleanupSocketFile(socketPath)
         }
         
-        let bootstrap = ServerBootstrap(group: group)
+        // Build base bootstrap with common options
+        var bootstrap = ServerBootstrap(group: group)
             .serverChannelOption(ChannelOptions.backlog, value: 256)
             .serverChannelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
             .childChannelInitializer { channel in
@@ -373,17 +378,68 @@ struct ServerApp {
                     channel.pipeline.addHandler(HTTPHandler(engine: engine))
                 }
             }
-            .childChannelOption(ChannelOptions.socket(IPPROTO_TCP, TCP_NODELAY), value: 1)
             .childChannelOption(ChannelOptions.maxMessagesPerRead, value: 16)
             .childChannelOption(ChannelOptions.recvAllocator, value: AdaptiveRecvByteBufferAllocator())
         
+        // Only add TCP_NODELAY for TCP connections (not applicable to Unix sockets)
+        if socketPath == nil {
+            bootstrap = bootstrap.childChannelOption(ChannelOptions.socket(IPPROTO_TCP, TCP_NODELAY), value: 1)
+        }
+        
         do {
-            let channel = try await bootstrap.bind(host: "0.0.0.0", port: port).get()
-            print("afmbridge-server listening on http://0.0.0.0:\(port)")
+            let channel: Channel
+            
+            if let socketPath = socketPath {
+                // Bind to Unix Domain Socket
+                channel = try await bootstrap.bind(unixDomainSocketPath: socketPath).get()
+                print("afmbridge-server listening on unix:\(socketPath)")
+            } else {
+                // Bind to TCP port
+                channel = try await bootstrap.bind(host: "0.0.0.0", port: port).get()
+                print("afmbridge-server listening on http://0.0.0.0:\(port)")
+            }
+            
             print("Model: ondevice (Apple FoundationModels)")
             print("Status: \(engine.availabilityDescription)")
+            
+            // Set up signal handling for graceful shutdown
+            let signalSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+            signal(SIGINT, SIG_IGN)  // Ignore default handler
+            signalSource.setEventHandler {
+                print("\nShutting down...")
+                if let socketPath = socketPath {
+                    cleanupSocketFile(socketPath)
+                }
+                channel.close(promise: nil)
+            }
+            signalSource.resume()
+            
+            // Also handle SIGTERM
+            let termSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+            signal(SIGTERM, SIG_IGN)
+            termSource.setEventHandler {
+                print("\nShutting down...")
+                if let socketPath = socketPath {
+                    cleanupSocketFile(socketPath)
+                }
+                channel.close(promise: nil)
+            }
+            termSource.resume()
+            
             try await channel.closeFuture.get()
+            
+            // Final cleanup
+            if let socketPath = socketPath {
+                cleanupSocketFile(socketPath)
+            }
+            
+            try await group.shutdownGracefully()
+            
         } catch {
+            // Cleanup on error
+            if let socketPath = socketPath {
+                cleanupSocketFile(socketPath)
+            }
             fputs("ERROR: Failed to start server: \(error)\n", stderr)
             exit(1)
         }
@@ -405,6 +461,20 @@ func parsePort(from arguments: [String]) -> Int? {
         exit(1)
     }
     return port
+}
+
+func parseSocket(from arguments: [String]) -> String? {
+    guard let index = arguments.firstIndex(of: "--socket") else { return nil }
+    let valueIndex = arguments.index(after: index)
+    guard valueIndex < arguments.endIndex else {
+        fputs("ERROR: --socket requires a path\n", stderr)
+        exit(1)
+    }
+    return arguments[valueIndex]
+}
+
+func cleanupSocketFile(_ path: String) {
+    unlink(path)
 }
 
 @inline(__always)
