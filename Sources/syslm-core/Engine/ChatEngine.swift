@@ -12,11 +12,20 @@ public struct ChatEngine: Sendable {
     
     public init() {}
     
+    // MARK: - Model Access
+    
+    /// Get the model with permissive guardrails to minimize refusals.
+    /// Note: Even with permissive guardrails, the model may still refuse some requests
+    /// due to its internal safety training. This is an Apple limitation.
+    /// Reference: https://developer.apple.com/documentation/foundationmodels/improving-the-safety-of-generative-model-output/
+    private var model: SystemLanguageModel {
+        SystemLanguageModel(guardrails: .permissiveContentTransformations)
+    }
+    
     // MARK: - Availability
     
     /// Check if the on-device model is available
     public var isAvailable: Bool {
-        let model = SystemLanguageModel.default
         if case .available = model.availability {
             return true
         }
@@ -25,7 +34,6 @@ public struct ChatEngine: Sendable {
     
     /// Get the availability status description
     public var availabilityDescription: String {
-        let model = SystemLanguageModel.default
         switch model.availability {
         case .available:
             return "available"
@@ -46,7 +54,6 @@ public struct ChatEngine: Sendable {
         }
         
         // Check model availability
-        let model = SystemLanguageModel.default
         guard case .available = model.availability else {
             throw ChatEngineError.modelUnavailable(availabilityDescription)
         }
@@ -146,7 +153,7 @@ public struct ChatEngine: Sendable {
                         throw ChatEngineError.emptyMessages
                     }
                     
-                    let model = SystemLanguageModel.default
+                    let model = SystemLanguageModel(guardrails: .permissiveContentTransformations)
                     guard case .available = model.availability else {
                         throw ChatEngineError.modelUnavailable(engine.availabilityDescription)
                     }

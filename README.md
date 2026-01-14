@@ -283,7 +283,8 @@ Current status: **46/46 tests passing**
 ## Known Limitations
 
 - **Streaming granularity:** Apple's FoundationModels streams in batched chunks (~6-8 tokens), not individual tokens
-- **Content filters:** Apple's on-device model may reject some prompts
+- **Model refusals:** The on-device model may refuse certain requests (e.g., "what's your name") due to its internal safety training. This happens even with permissive guardrails. Workaround: use a system message to establish context (e.g., `--system "You are an assistant named Adam"`)
+- **Content filters:** Apple's guardrails may block some prompts entirely
 - **Context window:** Limited context size (see Apple's TN3193)
 - **Token counts:** Usage stats are estimated (Apple doesn't expose actual token counts)
 - **Not implemented:** logprobs, n>1 completions, seed (deterministic sampling)

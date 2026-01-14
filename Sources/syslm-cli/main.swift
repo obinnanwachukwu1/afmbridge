@@ -52,7 +52,12 @@ struct CLI {
         
         // Handle different modes
         if args.interactive {
-            await runInteractive(transport: transport, args: args)
+            // Interactive mode always streams by default
+            var interactiveArgs = args
+            if !args.noStream {
+                interactiveArgs.stream = true
+            }
+            await runInteractive(transport: transport, args: interactiveArgs)
         } else if let prompt = args.prompt {
             await runSinglePrompt(transport: transport, prompt: prompt, args: args)
         } else if args.prompt == nil && !args.interactive {
@@ -245,8 +250,9 @@ struct CLI {
             echo "prompt" | syslm-cli [OPTIONS]
         
         OPTIONS:
-            -i, --interactive    Interactive mode (REPL)
+            -i, --interactive    Interactive mode (REPL) - streams by default
             -s, --stream         Stream the response
+            --no-stream          Disable streaming (for interactive mode)
             --system <TEXT>      System message
             --model <NAME>       Model name (default: ondevice)
             --temperature <NUM>  Temperature (0.0-2.0)
@@ -262,7 +268,7 @@ struct CLI {
             # Single prompt
             syslm-cli "What is the capital of France?"
             
-            # Interactive mode
+            # Interactive mode (streams by default)
             syslm-cli -i
             
             # With system message
@@ -286,6 +292,7 @@ struct Arguments {
     var socketPath: String = RPCDefaults.socketPath
     var interactive: Bool = false
     var stream: Bool = false
+    var noStream: Bool = false  // Explicitly disable streaming in interactive mode
     var system: String? = nil
     var model: String = "ondevice"
     var temperature: Double? = nil
@@ -307,6 +314,9 @@ struct Arguments {
                 
             case "-s", "--stream":
                 args.stream = true
+                
+            case "--no-stream":
+                args.noStream = true
                 
             case "--system":
                 i += 1
