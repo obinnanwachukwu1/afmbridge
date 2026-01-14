@@ -1,8 +1,8 @@
-// syslm-socket/main.swift
-// Unix socket server for syslm RPC
+// afmbridge-socket/main.swift
+// Unix socket server for afmbridge RPC
 
 import Foundation
-import syslm_core
+import afmbridge_core
 
 /// Socket server that handles RPC requests from Unix socket clients.
 @main
@@ -24,7 +24,7 @@ struct SocketServer {
         }
         
         if verbose {
-            print("syslm-socket starting...")
+            print("afmbridge-socket starting...")
             print("Socket path: \(socketPath)")
             print("Model: available")
             fflush(stdout)

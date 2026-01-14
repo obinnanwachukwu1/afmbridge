@@ -1,4 +1,4 @@
-// syslm-core/Engine/ToolCallParser.swift
+// afmbridge-core/Engine/ToolCallParser.swift
 // Parses tool calls from model text output
 
 import Foundation

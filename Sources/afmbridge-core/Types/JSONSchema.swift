@@ -1,4 +1,4 @@
-// syslm-core/Types/JSONSchema.swift
+// afmbridge-core/Types/JSONSchema.swift
 // JSON Schema representation for structured outputs and tool parameters
 
 import Foundation

@@ -2,40 +2,40 @@
 import PackageDescription
 
 let package = Package(
-  name: "syslm",
+  name: "afmbridge",
   platforms: [.macOS(.v26)], // macOS 26+ (Apple Intelligence)
   products: [
-    .library(name: "syslm-core", targets: ["syslm-core"]),
-    .executable(name: "syslm-server", targets: ["syslm-server"]),
-    .executable(name: "syslm-socket", targets: ["syslm-socket"]),
-    .executable(name: "syslm-cli", targets: ["syslm-cli"])
+    .library(name: "afmbridge-core", targets: ["afmbridge-core"]),
+    .executable(name: "afmbridge-server", targets: ["afmbridge-server"]),
+    .executable(name: "afmbridge-socket", targets: ["afmbridge-socket"]),
+    .executable(name: "afmbridge-cli", targets: ["afmbridge-cli"])
   ],
   dependencies: [
     .package(url: "https://github.com/apple/swift-nio.git", from: "2.60.0")
   ],
   targets: [
     .target(
-      name: "syslm-core",
+      name: "afmbridge-core",
       dependencies: [],
       linkerSettings: [.linkedFramework("FoundationModels")]
     ),
     .executableTarget(
-      name: "syslm-server",
+      name: "afmbridge-server",
       dependencies: [
-        "syslm-core",
+        "afmbridge-core",
         .product(name: "NIO", package: "swift-nio"),
         .product(name: "NIOHTTP1", package: "swift-nio")
       ],
       linkerSettings: [.linkedFramework("FoundationModels")]
     ),
     .executableTarget(
-      name: "syslm-socket",
-      dependencies: ["syslm-core"],
+      name: "afmbridge-socket",
+      dependencies: ["afmbridge-core"],
       linkerSettings: [.linkedFramework("FoundationModels")]
     ),
     .executableTarget(
-      name: "syslm-cli",
-      dependencies: ["syslm-core"],
+      name: "afmbridge-cli",
+      dependencies: ["afmbridge-core"],
       linkerSettings: [.linkedFramework("FoundationModels")]
     )
   ]

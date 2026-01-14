@@ -1,4 +1,4 @@
-# syslm
+# afmbridge
 
 OpenRouter-compatible API layer for Apple's on-device FoundationModels framework. Exposes a `POST /v1/chat/completions` endpoint that works as a drop-in replacement for OpenAI/OpenRouter APIs.
 
@@ -28,7 +28,7 @@ swift build
 ### HTTP Server
 
 ```bash
-swift run syslm-server --port 8765
+swift run afmbridge-server --port 8765
 ```
 
 ```bash
@@ -41,16 +41,16 @@ curl http://localhost:8765/v1/chat/completions \
 
 ```bash
 # One-shot query (direct mode)
-swift run syslm-cli "What is the capital of France?"
+swift run afmbridge-cli "What is the capital of France?"
 
 # Streaming output
-swift run syslm-cli -s "Tell me a story"
+swift run afmbridge-cli -s "Tell me a story"
 
 # Interactive REPL
-swift run syslm-cli -i
+swift run afmbridge-cli -i
 
-# Connect via Unix socket (requires syslm-socket running)
-swift run syslm-cli --socket "Hello"
+# Connect via Unix socket (requires afmbridge-socket running)
+swift run afmbridge-cli --socket "Hello"
 ```
 
 ### Unix Socket Server
@@ -58,11 +58,11 @@ swift run syslm-cli --socket "Hello"
 For lower-latency IPC without HTTP overhead:
 
 ```bash
-# Start socket server (default: /tmp/syslm.sock)
-swift run syslm-socket
+# Start socket server (default: /tmp/afmbridge.sock)
+swift run afmbridge-socket
 
 # Or specify a custom path
-swift run syslm-socket --socket /path/to/syslm.sock --verbose
+swift run afmbridge-socket --socket /path/to/afmbridge.sock --verbose
 ```
 
 ### Use with OpenAI SDK
@@ -133,7 +133,7 @@ Health check endpoint.
 
 ## Tool Calling
 
-syslm supports OpenRouter-style function calling:
+afmbridge supports OpenRouter-style function calling:
 
 ```python
 tools = [{
@@ -209,7 +209,7 @@ for chunk in stream:
 
 ```
 Sources/
-├── syslm-core/              # Core library
+├── afmbridge-core/              # Core library
 │   ├── Types/               # OpenRouter-compatible request/response types
 │   │   ├── Request.swift
 │   │   ├── Response.swift
@@ -227,9 +227,9 @@ Sources/
 │       ├── DirectTransport.swift # In-process (wraps ChatEngine)
 │       ├── SocketTransport.swift # Unix socket client
 │       └── RPCProtocol.swift     # Binary wire protocol
-├── syslm-server/            # HTTP server (SwiftNIO)
-├── syslm-socket/            # Unix socket RPC server
-└── syslm-cli/               # Command-line interface
+├── afmbridge-server/            # HTTP server (SwiftNIO)
+├── afmbridge-socket/            # Unix socket RPC server
+└── afmbridge-cli/               # Command-line interface
 
 tests/                       # TypeScript conformance test suite
 ├── src/
@@ -244,7 +244,7 @@ tests/                       # TypeScript conformance test suite
 
 ## Transport Architecture
 
-syslm supports multiple transports for different use cases:
+afmbridge supports multiple transports for different use cases:
 
 | Transport | Use Case | Latency |
 |-----------|----------|---------|
@@ -253,14 +253,14 @@ syslm supports multiple transports for different use cases:
 | HTTP Server | Network, SDK compatibility | Higher |
 
 ```swift
-import syslm_core
+import afmbridge_core
 
 // Direct (in-process)
 let direct = try DirectTransport()
 let response = try await direct.send(request)
 
-// Socket (connects to syslm-socket server)
-let socket = try await SocketTransport(path: "/tmp/syslm.sock")
+// Socket (connects to afmbridge-socket server)
+let socket = try await SocketTransport(path: "/tmp/afmbridge.sock")
 let response = try await socket.send(request)
 ```
 
@@ -270,7 +270,7 @@ The test suite validates OpenRouter API compatibility:
 
 ```bash
 # Start the server
-swift run syslm-server --port 8765
+swift run afmbridge-server --port 8765
 
 # Run tests (in another terminal)
 cd tests

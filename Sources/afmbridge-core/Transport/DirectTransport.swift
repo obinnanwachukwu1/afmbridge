@@ -1,4 +1,4 @@
-// syslm-core/Transport/DirectTransport.swift
+// afmbridge-core/Transport/DirectTransport.swift
 // In-process transport that wraps ChatEngine directly
 
 import Foundation

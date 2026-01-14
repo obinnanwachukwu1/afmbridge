@@ -1,11 +1,11 @@
-// syslm-server/main.swift
+// afmbridge-server/main.swift
 // OpenRouter-compatible HTTP server for Apple's on-device FoundationModels
 
 import Foundation
 import FoundationModels
 import NIO
 import NIOHTTP1
-import syslm_core
+import afmbridge_core
 
 // MARK: - HTTP Handler
 
@@ -379,7 +379,7 @@ struct ServerApp {
         
         do {
             let channel = try await bootstrap.bind(host: "0.0.0.0", port: port).get()
-            print("syslm-server listening on http://0.0.0.0:\(port)")
+            print("afmbridge-server listening on http://0.0.0.0:\(port)")
             print("Model: ondevice (Apple FoundationModels)")
             print("Status: \(engine.availabilityDescription)")
             try await channel.closeFuture.get()
@@ -409,5 +409,5 @@ func parsePort(from arguments: [String]) -> Int? {
 
 @inline(__always)
 func serverLog(_ message: String) {
-    fputs("[syslm-server] \(message)\n", stderr)
+    fputs("[afmbridge-server] \(message)\n", stderr)
 }

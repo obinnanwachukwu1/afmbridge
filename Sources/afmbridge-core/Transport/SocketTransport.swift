@@ -1,9 +1,9 @@
-// syslm-core/Transport/SocketTransport.swift
+// afmbridge-core/Transport/SocketTransport.swift
 // Unix socket transport for RPC communication
 
 import Foundation
 
-/// Transport that connects to a syslm socket server via Unix domain socket.
+/// Transport that connects to a afmbridge socket server via Unix domain socket.
 /// This is ideal for CLI tools and local applications that want low-latency
 /// communication without HTTP overhead.
 public final class SocketTransport: ChatTransport, @unchecked Sendable {
@@ -16,7 +16,7 @@ public final class SocketTransport: ChatTransport, @unchecked Sendable {
     
     /// Create a socket transport.
     /// - Parameters:
-    ///   - socketPath: Path to the Unix socket (defaults to /tmp/syslm.sock)
+    ///   - socketPath: Path to the Unix socket (defaults to /tmp/afmbridge.sock)
     ///   - config: Transport configuration
     public init(
         socketPath: String = RPCDefaults.socketPath,

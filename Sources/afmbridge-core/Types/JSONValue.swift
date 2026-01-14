@@ -1,4 +1,4 @@
-// syslm-core/Types/JSONValue.swift
+// afmbridge-core/Types/JSONValue.swift
 // Type-safe JSON value representation for dynamic JSON handling
 
 import Foundation

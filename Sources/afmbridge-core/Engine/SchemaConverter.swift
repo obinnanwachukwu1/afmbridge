@@ -1,4 +1,4 @@
-// syslm-core/Engine/SchemaConverter.swift
+// afmbridge-core/Engine/SchemaConverter.swift
 // Converts OpenRouter JSON Schema to Apple's DynamicGenerationSchema
 
 import Foundation

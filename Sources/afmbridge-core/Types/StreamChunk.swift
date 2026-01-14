@@ -1,4 +1,4 @@
-// syslm-core/Types/StreamChunk.swift
+// afmbridge-core/Types/StreamChunk.swift
 // OpenRouter-compatible SSE streaming types
 // Reference: https://openrouter.ai/docs/api/reference/streaming
 

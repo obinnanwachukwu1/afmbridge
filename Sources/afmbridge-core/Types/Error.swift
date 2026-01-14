@@ -1,4 +1,4 @@
-// syslm-core/Types/Error.swift
+// afmbridge-core/Types/Error.swift
 // OpenRouter-compatible error types
 // Reference: https://openrouter.ai/docs/api/reference/errors-and-debugging
 

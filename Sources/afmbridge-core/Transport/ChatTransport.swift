@@ -1,9 +1,9 @@
-// syslm-core/Transport/ChatTransport.swift
+// afmbridge-core/Transport/ChatTransport.swift
 // Transport-agnostic protocol for chat completions
 
 import Foundation
 
-/// Protocol for transport-agnostic communication with syslm.
+/// Protocol for transport-agnostic communication with afmbridge.
 /// Implementations can use different underlying transports:
 /// - DirectTransport: In-process, no network (for embedded use)
 /// - SocketTransport: Unix socket RPC (for CLI tools)

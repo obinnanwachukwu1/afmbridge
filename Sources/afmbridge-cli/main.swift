@@ -1,10 +1,10 @@
-// syslm-cli/main.swift
-// Command-line interface for syslm
+// afmbridge-cli/main.swift
+// Command-line interface for afmbridge
 
 import Foundation
-import syslm_core
+import afmbridge_core
 
-/// Command-line interface for syslm.
+/// Command-line interface for afmbridge.
 /// Supports both direct (in-process) and socket (RPC) modes.
 @main
 struct CLI {
@@ -24,7 +24,7 @@ struct CLI {
         }
         
         if args.version {
-            print("syslm-cli 1.0.0")
+            print("afmbridge-cli 1.0.0")
             return
         }
         
@@ -43,7 +43,7 @@ struct CLI {
         guard available else {
             if args.mode == .socket {
                 fputs("ERROR: Socket server not running at \(args.socketPath)\n", stderr)
-                fputs("Start it with: swift run syslm-socket\n", stderr)
+                fputs("Start it with: swift run afmbridge-socket\n", stderr)
             } else {
                 fputs("ERROR: Model not available\n", stderr)
             }
@@ -68,13 +68,14 @@ struct CLI {
     
     /// Run in interactive mode (REPL)
     static func runInteractive(transport: any ChatTransport, args: Arguments) async {
-        print("syslm interactive mode (type 'exit' or Ctrl+D to quit)")
+        print("afmbridge interactive mode (type 'exit' or Ctrl+D to quit, /help for commands)")
         if let system = args.system {
             print("System: \(system)")
         }
         print("")
         
         var messages: [Message] = []
+        var debugMode = false
         
         // Add system message if provided
         if let system = args.system {
@@ -102,7 +103,7 @@ struct CLI {
             
             // Special commands
             if input.hasPrefix("/") {
-                handleCommand(input, messages: &messages)
+                handleCommand(input, messages: &messages, debugMode: &debugMode)
                 continue
             }
             
@@ -117,6 +118,17 @@ struct CLI {
                 temperature: args.temperature,
                 maxTokens: args.maxTokens
             )
+            
+            // Debug: show what we're sending
+            if debugMode {
+                print("[DEBUG] Sending \(messages.count) messages:")
+                for (i, msg) in messages.enumerated() {
+                    let content = msg.content?.textValue ?? "(nil)"
+                    let preview = content.count > 80 ? String(content.prefix(80)) + "..." : content
+                    print("  \(i+1). [\(msg.role.rawValue)] \(preview)")
+                }
+                print("")
+            }
             
             // Get response
             do {
@@ -208,7 +220,7 @@ struct CLI {
     }
     
     /// Handle special commands
-    static func handleCommand(_ command: String, messages: inout [Message]) {
+    static func handleCommand(_ command: String, messages: inout [Message], debugMode: inout Bool) {
         let parts = command.split(separator: " ", maxSplits: 1)
         let cmd = String(parts[0]).lowercased()
         
@@ -218,21 +230,51 @@ struct CLI {
             messages = messages.filter { $0.role == .system }
             print("Conversation cleared.")
             
+        case "/system":
+            if parts.count > 1 {
+                let newSystem = String(parts[1])
+                // Remove existing system message
+                messages.removeAll { $0.role == .system }
+                // Add new system message at the beginning
+                messages.insert(Message(role: .system, content: .text(newSystem)), at: 0)
+                print("System prompt set: \(newSystem)")
+            } else {
+                // Show current system prompt
+                if let systemMsg = messages.first(where: { $0.role == .system }) {
+                    print("Current system: \(systemMsg.content?.textValue ?? "(empty)")")
+                } else {
+                    print("No system prompt set. Use: /system <prompt>")
+                }
+            }
+            
+        case "/reset":
+            // Clear everything including system message
+            messages.removeAll()
+            print("Conversation fully reset (including system prompt).")
+            
+        case "/debug":
+            debugMode.toggle()
+            print("Debug mode: \(debugMode ? "ON" : "OFF")")
+            
         case "/history":
             print("History (\(messages.count) messages):")
             for (i, msg) in messages.enumerated() {
                 let role = msg.role.rawValue
                 let content = msg.content?.textValue ?? ""
-                let preview = content.prefix(50)
-                print("  \(i + 1). [\(role)] \(preview)\(content.count > 50 ? "..." : "")")
+                let preview = content.prefix(60)
+                print("  \(i + 1). [\(role)] \(preview)\(content.count > 60 ? "..." : "")")
             }
             
         case "/help":
             print("Commands:")
-            print("  /clear   - Clear conversation history")
-            print("  /history - Show conversation history")
-            print("  /help    - Show this help")
-            print("  exit     - Exit the CLI")
+            print("  /system <prompt> - Set system prompt (guides model behavior)")
+            print("  /system          - Show current system prompt")
+            print("  /clear           - Clear conversation (keeps system prompt)")
+            print("  /reset           - Clear everything including system prompt")
+            print("  /history         - Show conversation history")
+            print("  /debug           - Toggle debug mode (shows messages sent)")
+            print("  /help            - Show this help")
+            print("  exit             - Exit the CLI")
             
         default:
             print("Unknown command: \(cmd)")
@@ -243,11 +285,11 @@ struct CLI {
     /// Print usage information
     static func printUsage() {
         print("""
-        syslm-cli - Command-line interface for syslm
+        afmbridge-cli - Command-line interface for afmbridge
         
         USAGE:
-            syslm-cli [OPTIONS] [PROMPT]
-            echo "prompt" | syslm-cli [OPTIONS]
+            afmbridge-cli [OPTIONS] [PROMPT]
+            echo "prompt" | afmbridge-cli [OPTIONS]
         
         OPTIONS:
             -i, --interactive    Interactive mode (REPL) - streams by default
@@ -258,7 +300,7 @@ struct CLI {
             --temperature <NUM>  Temperature (0.0-2.0)
             --max-tokens <NUM>   Maximum response tokens
             
-            --socket [PATH]      Use socket transport (default: /tmp/syslm.sock)
+            --socket [PATH]      Use socket transport (default: /tmp/afmbridge.sock)
             --direct             Use direct transport (default)
             
             -h, --help           Show this help
@@ -266,22 +308,22 @@ struct CLI {
         
         EXAMPLES:
             # Single prompt
-            syslm-cli "What is the capital of France?"
+            afmbridge-cli "What is the capital of France?"
             
             # Interactive mode (streams by default)
-            syslm-cli -i
+            afmbridge-cli -i
             
             # With system message
-            syslm-cli --system "You are a pirate" "Greet me"
+            afmbridge-cli --system "You are a pirate" "Greet me"
             
             # Streaming
-            syslm-cli -s "Tell me a story"
+            afmbridge-cli -s "Tell me a story"
             
             # From stdin
-            echo "Hello" | syslm-cli
+            echo "Hello" | afmbridge-cli
             
             # Using socket server
-            syslm-cli --socket "Hello"
+            afmbridge-cli --socket "Hello"
         """)
     }
 }

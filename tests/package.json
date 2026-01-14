@@ -1,11 +1,11 @@
 {
-  "name": "syslm-tests",
+  "name": "afmbridge-tests",
   "version": "1.0.0",
-  "description": "Conformance tests for syslm OpenRouter-compatible API",
+  "description": "Conformance tests for afmbridge OpenRouter-compatible API",
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "test:syslm": "TEST_TARGET=syslm vitest run",
+    "test:afmbridge": "TEST_TARGET=afmbridge vitest run",
     "test:openrouter": "TEST_TARGET=openrouter vitest run",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",

@@ -1,4 +1,4 @@
-// syslm-core/Engine/ChatEngine.swift
+// afmbridge-core/Engine/ChatEngine.swift
 // Main engine that processes OpenRouter-style requests using FoundationModels
 
 import Foundation

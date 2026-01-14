@@ -1,18 +1,18 @@
 /**
- * Test client setup for syslm conformance tests
+ * Test client setup for afmbridge conformance tests
  * 
  * Environment variables:
- * - TEST_TARGET: 'syslm' (default) or 'openrouter'
- * - SYSLM_BASE_URL: Base URL for syslm server (default: http://localhost:8765/v1)
+ * - TEST_TARGET: 'afmbridge' (default) or 'openrouter'
+ * - SYSLM_BASE_URL: Base URL for afmbridge server (default: http://localhost:8765/v1)
  * - OPENROUTER_API_KEY: API key for OpenRouter (required when TEST_TARGET=openrouter)
  * - OPENROUTER_MODEL: Model to use on OpenRouter (default: meta-llama/llama-3.2-3b-instruct:free)
  */
 
 import OpenAI from 'openai';
 
-const TEST_TARGET = process.env.TEST_TARGET ?? 'syslm';
+const TEST_TARGET = process.env.TEST_TARGET ?? 'afmbridge';
 
-// syslm configuration
+// afmbridge configuration
 const SYSLM_BASE_URL = process.env.SYSLM_BASE_URL ?? 'http://localhost:8765/v1';
 
 // OpenRouter configuration
@@ -32,16 +32,16 @@ export function createClient(): OpenAI {
       baseURL: OPENROUTER_BASE_URL,
       apiKey: OPENROUTER_API_KEY,
       defaultHeaders: {
-        'HTTP-Referer': 'https://github.com/syslm/conformance-tests',
-        'X-Title': 'syslm Conformance Tests',
+        'HTTP-Referer': 'https://github.com/afmbridge/conformance-tests',
+        'X-Title': 'afmbridge Conformance Tests',
       },
     });
   }
 
-  // Default: syslm
+  // Default: afmbridge
   return new OpenAI({
     baseURL: SYSLM_BASE_URL,
-    apiKey: 'test-key', // syslm doesn't require auth, but SDK needs a value
+    apiKey: 'test-key', // afmbridge doesn't require auth, but SDK needs a value
   });
 }
 
@@ -61,21 +61,21 @@ export function getModel(): string {
 export const MODEL = getModel();
 
 /**
- * Check if we're testing against syslm or OpenRouter
+ * Check if we're testing against afmbridge or OpenRouter
  */
 export function isTestingOpenRouter(): boolean {
   return TEST_TARGET === 'openrouter';
 }
 
 /**
- * Check if we're testing against syslm
+ * Check if we're testing against afmbridge
  */
 export function isTestingSyslm(): boolean {
-  return TEST_TARGET === 'syslm';
+  return TEST_TARGET === 'afmbridge';
 }
 
 /**
- * Helper to check if server is running (only relevant for syslm)
+ * Helper to check if server is running (only relevant for afmbridge)
  */
 export async function isServerRunning(): Promise<boolean> {
   if (TEST_TARGET === 'openrouter') {
@@ -98,5 +98,5 @@ export function getTestTargetDescription(): string {
   if (TEST_TARGET === 'openrouter') {
     return `OpenRouter (${OPENROUTER_MODEL})`;
   }
-  return `syslm (${SYSLM_BASE_URL})`;
+  return `afmbridge (${SYSLM_BASE_URL})`;
 }

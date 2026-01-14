@@ -55,7 +55,7 @@ describe('Tool Calling', () => {
     const running = await isServerRunning();
     if (!running) {
       throw new Error(
-        'syslm-server is not running. Start it with: swift run syslm-server --port 8765'
+        'afmbridge-server is not running. Start it with: swift run afmbridge-server --port 8765'
       );
     }
   });

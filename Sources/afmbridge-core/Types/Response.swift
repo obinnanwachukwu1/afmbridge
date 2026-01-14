@@ -1,4 +1,4 @@
-// syslm-core/Types/Response.swift
+// afmbridge-core/Types/Response.swift
 // OpenRouter-compatible chat completion response types
 // Reference: https://openrouter.ai/docs/api/reference/overview
 

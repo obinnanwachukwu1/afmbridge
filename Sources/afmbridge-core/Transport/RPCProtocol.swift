@@ -1,4 +1,4 @@
-// syslm-core/Transport/RPCProtocol.swift
+// afmbridge-core/Transport/RPCProtocol.swift
 // Wire protocol for Unix socket RPC communication
 
 import Foundation
@@ -268,6 +268,6 @@ public enum RPCCodec {
 
 /// Default socket path
 public enum RPCDefaults {
-    public static let socketPath = "/tmp/syslm.sock"
+    public static let socketPath = "/tmp/afmbridge.sock"
     public static let maxPayloadSize: UInt32 = 10 * 1024 * 1024 // 10MB
 }

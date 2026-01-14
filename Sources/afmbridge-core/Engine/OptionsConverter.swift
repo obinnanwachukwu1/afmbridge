@@ -1,4 +1,4 @@
-// syslm-core/Engine/OptionsConverter.swift
+// afmbridge-core/Engine/OptionsConverter.swift
 // Converts OpenRouter parameters to FoundationModels GenerationOptions
 
 import Foundation

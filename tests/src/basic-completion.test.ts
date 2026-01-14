@@ -13,7 +13,7 @@ describe('Basic Completion', () => {
     const running = await isServerRunning();
     if (!running) {
       throw new Error(
-        'syslm-server is not running. Start it with: swift run syslm-server --port 8765'
+        'afmbridge-server is not running. Start it with: swift run afmbridge-server --port 8765'
       );
     }
   });
@@ -28,7 +28,7 @@ describe('Basic Completion', () => {
     expect(response.id).toBeDefined();
     expect(typeof response.id).toBe('string');
     expect(response.id.length).toBeGreaterThan(0);
-    // syslm uses chatcmpl- prefix, OpenRouter uses gen- prefix
+    // afmbridge uses chatcmpl- prefix, OpenRouter uses gen- prefix
     if (isTestingSyslm()) {
       expect(response.id).toMatch(/^chatcmpl-/);
     }
