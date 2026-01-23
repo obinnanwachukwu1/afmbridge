@@ -16,9 +16,17 @@ final class HTTPHandler: ChannelInboundHandler {
     private let engine: ChatEngine
     private var requestHead: HTTPRequestHead?
     private var bodyBuffer: ByteBuffer?
+    private var activeTask: Task<Void, Never>?
     
     init(engine: ChatEngine) {
         self.engine = engine
+    }
+    
+    func channelInactive(context: ChannelHandlerContext) {
+        serverLog("Channel inactive, cancelling active task if any")
+        activeTask?.cancel()
+        activeTask = nil
+        context.fireChannelInactive()
     }
     
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -47,13 +55,14 @@ final class HTTPHandler: ChannelInboundHandler {
             let contextHolder = ContextHolder(context: context)
             let engine = self.engine
             
-            Task {
+            activeTask = Task {
                 await self.handleChatCompletion(
                     body: data,
                     engine: engine,
                     contextHolder: contextHolder,
                     eventLoop: eventLoop
                 )
+                self.activeTask = nil
             }
             
         case (.GET, "/health"), (.GET, "/"):
@@ -196,6 +205,10 @@ final class HTTPHandler: ChannelInboundHandler {
             let stream = engine.stream(request)
             
             for try await chunk in stream {
+                if Task.isCancelled {
+                    serverLog("Streaming cancelled by client disconnect")
+                    break
+                }
                 guard let data = try? encoder.encode(chunk),
                       let json = String(data: data, encoding: .utf8) else {
                     continue
@@ -343,9 +356,20 @@ struct ContextHolder: @unchecked Sendable {
 
 // MARK: - Main Entry Point
 
+// Global configuration
+nonisolated(unsafe) var isQuiet = false
+
 @main
 struct ServerApp {
     static func main() async {
+        if CommandLine.arguments.contains("--help") || CommandLine.arguments.contains("-h") {
+            printHelp()
+            exit(0)
+        }
+        
+        // Parse quiet flag early
+        isQuiet = CommandLine.arguments.contains("--quiet") || CommandLine.arguments.contains("-q")
+
         let engine = ChatEngine()
         
         guard engine.isAvailable else {
@@ -355,6 +379,10 @@ struct ServerApp {
         
         let socketPath = parseSocket(from: CommandLine.arguments)
         let port = parsePort(from: CommandLine.arguments) ?? 8000
+        let maxQueueSize = parseMaxQueueSize(from: CommandLine.arguments) ?? 100
+        
+        // Configure executor
+        await ModelExecutor.shared.setMaxQueueDepth(maxQueueSize)
         
         // Warn if both are specified
         if socketPath != nil && CommandLine.arguments.contains("--port") {
@@ -463,6 +491,41 @@ func parsePort(from arguments: [String]) -> Int? {
     return port
 }
 
+func parseMaxQueueSize(from arguments: [String]) -> Int? {
+    guard let index = arguments.firstIndex(of: "--max-queue-size") else { return nil }
+    let valueIndex = arguments.index(after: index)
+    guard valueIndex < arguments.endIndex else {
+        fputs("ERROR: --max-queue-size requires a value\n", stderr)
+        exit(1)
+    }
+    let value = arguments[valueIndex]
+    guard let size = Int(value), size > 0 else {
+        fputs("ERROR: Invalid queue size: \(value)\n", stderr)
+        exit(1)
+    }
+    return size
+}
+
+func printHelp() {
+    print("""
+    afmbridge-server - HTTP server for Apple Foundation Models
+    
+    Usage: afmbridge-server [OPTIONS]
+    
+    Options:
+      --port <port>             Port to listen on (default: 8000)
+      --socket <path>           Unix socket path to listen on
+      --max-queue-size <size>   Maximum number of queued requests (default: 100)
+      -q, --quiet               Suppress non-error logs
+      -h, --help                Show this help message
+    
+    Examples:
+      afmbridge-server --port 8765
+      afmbridge-server --socket /tmp/afmbridge.sock
+      afmbridge-server --max-queue-size 10
+    """)
+}
+
 func parseSocket(from arguments: [String]) -> String? {
     guard let index = arguments.firstIndex(of: "--socket") else { return nil }
     let valueIndex = arguments.index(after: index)
@@ -479,5 +542,7 @@ func cleanupSocketFile(_ path: String) {
 
 @inline(__always)
 func serverLog(_ message: String) {
-    fputs("[afmbridge-server] \(message)\n", stderr)
+    if !isQuiet {
+        fputs("[afmbridge-server] \(message)\n", stderr)
+    }
 }

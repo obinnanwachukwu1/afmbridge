@@ -4,26 +4,41 @@
 import Foundation
 import afmbridge_core
 
+// Global configuration
+nonisolated(unsafe) var isQuiet = false
+
 /// Socket server that handles RPC requests from Unix socket clients.
 @main
 struct SocketServer {
     
     static func main() async {
         // Parse arguments
+        if CommandLine.arguments.contains("--help") || CommandLine.arguments.contains("-h") {
+            printHelp()
+            exit(0)
+        }
+        
         let socketPath = parseSocketPath()
         let verbose = CommandLine.arguments.contains("--verbose") || CommandLine.arguments.contains("-v")
+        isQuiet = CommandLine.arguments.contains("--quiet") || CommandLine.arguments.contains("-q")
+        let maxQueueSize = parseMaxQueueSize() ?? 100
+        
+        // Configure executor
+        await ModelExecutor.shared.setMaxQueueDepth(maxQueueSize)
         
         // Create engine
         let engine = ChatEngine()
         
         // Check model availability
         guard engine.isAvailable else {
-            fputs("ERROR: SystemLanguageModel is not available.\n", stderr)
-            fputs("Reason: \(engine.availabilityDescription)\n", stderr)
+            if !isQuiet {
+                fputs("ERROR: SystemLanguageModel is not available.\n", stderr)
+                fputs("Reason: \(engine.availabilityDescription)\n", stderr)
+            }
             exit(2)
         }
         
-        if verbose {
+        if verbose && !isQuiet {
             print("afmbridge-socket starting...")
             print("Socket path: \(socketPath)")
             print("Model: available")
@@ -36,7 +51,9 @@ struct SocketServer {
         // Create socket
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else {
-            fputs("ERROR: Failed to create socket: \(errno)\n", stderr)
+            if !isQuiet {
+                fputs("ERROR: Failed to create socket: \(errno)\n", stderr)
+            }
             exit(1)
         }
         
@@ -46,7 +63,9 @@ struct SocketServer {
         
         let pathBytes = socketPath.utf8CString
         guard pathBytes.count <= MemoryLayout.size(ofValue: addr.sun_path) else {
-            fputs("ERROR: Socket path too long\n", stderr)
+            if !isQuiet {
+                fputs("ERROR: Socket path too long\n", stderr)
+            }
             exit(1)
         }
         
@@ -65,22 +84,30 @@ struct SocketServer {
         }
         
         guard bindResult == 0 else {
-            fputs("ERROR: Failed to bind socket: \(errno)\n", stderr)
+            if !isQuiet {
+                fputs("ERROR: Failed to bind socket: \(errno)\n", stderr)
+            }
             exit(1)
         }
         
         // Listen for connections
         guard listen(fd, 10) == 0 else {
-            fputs("ERROR: Failed to listen: \(errno)\n", stderr)
+            if !isQuiet {
+                fputs("ERROR: Failed to listen: \(errno)\n", stderr)
+            }
             exit(1)
         }
         
-        print("Listening on \(socketPath)")
-        fflush(stdout)
+        if !isQuiet {
+            print("Listening on \(socketPath)")
+            fflush(stdout)
+        }
         
         // Handle SIGINT for graceful shutdown
         signal(SIGINT) { _ in
-            print("\nShutting down...")
+            if !isQuiet {
+                print("\nShutting down...")
+            }
             try? FileManager.default.removeItem(atPath: RPCDefaults.socketPath)
             exit(0)
         }
@@ -97,20 +124,20 @@ struct SocketServer {
             }
             
             guard clientFd >= 0 else {
-                if verbose {
+                if verbose && !isQuiet {
                     fputs("WARN: Failed to accept connection: \(errno)\n", stderr)
                 }
                 continue
             }
             
-            if verbose {
+            if verbose && !isQuiet {
                 print("Client connected (fd: \(clientFd))")
                 fflush(stdout)
             }
             
             // Handle client synchronously in a detached task to avoid blocking
             Task.detached {
-                await handleClient(fd: clientFd, engine: engine, verbose: verbose)
+                await handleClient(fd: clientFd, engine: engine, verbose: verbose && !isQuiet)
             }
             
             // Yield to allow tasks to run
@@ -244,6 +271,7 @@ struct SocketServer {
             var chunkCount = 0
             
             for try await chunk in stream {
+                if Task.isCancelled { break }
                 let chunkData = try RPCCodec.encodeStreamChunk(chunk, requestId: requestId)
                 try handle.write(contentsOf: chunkData)
                 chunkCount += 1
@@ -290,5 +318,39 @@ struct SocketServer {
             }
         }
         return RPCDefaults.socketPath
+    }
+    
+    static func parseMaxQueueSize() -> Int? {
+        guard let index = CommandLine.arguments.firstIndex(of: "--max-queue-size") else { return nil }
+        let valueIndex = CommandLine.arguments.index(after: index)
+        guard valueIndex < CommandLine.arguments.endIndex else {
+            fputs("ERROR: --max-queue-size requires a value\n", stderr)
+            exit(1)
+        }
+        let value = CommandLine.arguments[valueIndex]
+        guard let size = Int(value), size > 0 else {
+            fputs("ERROR: Invalid queue size: \(value)\n", stderr)
+            exit(1)
+        }
+        return size
+    }
+    
+    static func printHelp() {
+        print("""
+        afmbridge-socket - Unix socket server for Apple Foundation Models
+        
+        Usage: afmbridge-socket [OPTIONS]
+        
+        Options:
+          --socket <path>           Unix socket path (default: /tmp/afmbridge.sock)
+          --max-queue-size <size>   Maximum number of queued requests (default: 100)
+          -v, --verbose             Enable verbose logging
+          -h, --help                Show this help message
+        
+        Examples:
+          afmbridge-socket
+          afmbridge-socket --socket /tmp/mysocket.sock
+          afmbridge-socket --max-queue-size 10
+        """)
     }
 }

@@ -235,6 +235,9 @@ public enum ChatEngineError: Error, Sendable {
     
     /// Context window exceeded
     case contextExceeded(used: Int, limit: Int)
+    
+    /// Queue is full
+    case queueFull
 }
 
 extension ChatEngineError: LocalizedError {
@@ -262,6 +265,8 @@ extension ChatEngineError: LocalizedError {
             return "Request refused: \(reason)"
         case .contextExceeded(let used, let limit):
             return "Context window exceeded: \(used) tokens used, limit is \(limit)"
+        case .queueFull:
+            return "Server queue is full. Please try again later."
         }
     }
 }
@@ -292,6 +297,8 @@ extension ChatEngineError {
             return .contentFiltered(errorDescription!)
         case .contextExceeded:
             return .contextWindowExceeded(errorDescription!)
+        case .queueFull:
+            return .rateLimited(errorDescription!)
         }
     }
 }

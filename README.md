@@ -12,6 +12,7 @@ OpenRouter-compatible API layer for Apple's on-device FoundationModels framework
 - **Streaming** — Server-sent events (SSE) for real-time streaming
 - **Multiple transports** — HTTP server, Unix socket RPC, or direct in-process
 - **CLI tool** — Interactive REPL and one-shot queries
+- **Resiliency** — Robust request queuing and mid-stream cancellation handling
 
 ## Requirements
 
@@ -35,6 +36,12 @@ swift run afmbridge-server --port 8765
 
 # Unix Domain Socket (for secure local IPC)
 swift run afmbridge-server --socket /tmp/myapp.sock
+
+# Configure queue size (default: 100)
+swift run afmbridge-server --max-queue-size 10
+
+# Quiet mode (suppress logs)
+swift run afmbridge-server --quiet
 ```
 
 ```bash
@@ -279,21 +286,29 @@ let socket = try await SocketTransport(path: "/tmp/afmbridge.sock")
 let response = try await socket.send(request)
 ```
 
+## Resiliency & Concurrency
+
+Since Apple's on-device Neural Engine is a single shared resource, `afmbridge` manages access carefully:
+
+- **Serial Queue**: Requests are processed one at a time (FIFO).
+- **Concurrency**: Multiple clients can submit requests simultaneously; they will be queued.
+- **Queue Limits**: Configurable queue depth (default: 100) prevents overload (`--max-queue-size`). Returns `429 Too Many Requests` when full.
+- **Cancellation**: If a client disconnects mid-stream, generation is immediately cancelled to free up the engine for the next request.
+- **Queue Preemption**: If a queued request is cancelled before it starts, it is skipped entirely.
+
 ## Running Tests
 
 The test suite validates OpenRouter API compatibility:
 
 ```bash
-# Start the server
-swift run afmbridge-server --port 8765
-
-# Run tests (in another terminal)
 cd tests
 npm install
 npm test
 ```
 
-Current status: **46/46 tests passing**
+The test runner automatically builds and starts `afmbridge-server` for you.
+
+Current status: **51/51 tests passing**
 
 ## Known Limitations
 

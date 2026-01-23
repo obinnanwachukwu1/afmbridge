@@ -48,94 +48,104 @@ public struct ChatEngine: Sendable {
     
     /// Process a chat completion request and return a complete response.
     public func complete(_ request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
-        // Validate request
-        guard !request.messages.isEmpty else {
-            throw ChatEngineError.emptyMessages
+        do {
+            return try await ModelExecutor.shared.execute {
+                // Validate request
+                guard !request.messages.isEmpty else {
+                    throw ChatEngineError.emptyMessages
+                }
+                
+                // Check model availability
+                guard case .available = model.availability else {
+                    throw ChatEngineError.modelUnavailable(availabilityDescription)
+                }
+                
+                // Extract the last message as the prompt
+                let lastMessage = request.messages.last!
+                guard lastMessage.role == .user || lastMessage.role == .tool else {
+                    throw ChatEngineError.lastMessageNotUser
+                }
+                
+                let promptContent = lastMessage.content?.textValue ?? ""
+                
+                // Build instructions from system messages and tool catalog
+                let instructions = buildInstructions(from: request)
+                
+                // Build transcript from conversation history (excluding last message)
+                let transcript = buildTranscript(from: Array(request.messages.dropLast()), tools: request.tools)
+                
+                // Create session
+                let session = LanguageModelSession(model: model, tools: [], transcript: transcript)
+                
+                // Build generation options
+                let options = buildOptions(from: request)
+                
+                // Build full prompt with instructions
+                let fullPrompt: String
+                if let instructionText = instructions, !instructionText.isEmpty {
+                    fullPrompt = "\(instructionText)\n\n\(promptContent)"
+                } else {
+                    fullPrompt = promptContent
+                }
+                
+                // Generate response - handle structured output if requested
+                var response: String
+                if let responseFormat = request.responseFormat,
+                   responseFormat.type == .jsonSchema,
+                   let schemaSpec = responseFormat.jsonSchema {
+                    // Use structured output generation with schema
+                    response = try await generateWithSchema(
+                        session: session,
+                        prompt: fullPrompt,
+                        schemaSpec: schemaSpec,
+                        options: options
+                    )
+                } else if let responseFormat = request.responseFormat,
+                          responseFormat.type == .jsonObject {
+                    // For json_object, add instruction to return JSON and strip any fences
+                    let jsonPrompt = fullPrompt + "\n\nYou MUST respond with ONLY valid JSON. No markdown, no explanation, just the JSON object."
+                    let rawResponse = try await session.respond(to: jsonPrompt, options: options).content
+                    response = stripMarkdownFences(rawResponse)
+                } else {
+                    // Regular text generation
+                    response = try await session.respond(to: fullPrompt, options: options).content
+                }
+                
+                // Parse the response for tool calls if tools were provided
+                let parseResult = parseResponse(
+                    content: response,
+                    tools: request.tools,
+                    toolChoice: request.toolChoice
+                )
+                
+                // Calculate token usage
+                let promptTokens = TokenEstimator.estimatePromptTokens(
+                    messages: request.messages,
+                    instructions: instructions
+                )
+                let completionTokens = TokenEstimator.estimateCompletionTokens(
+                    content: parseResult.content,
+                    toolCalls: parseResult.toolCalls
+                )
+                let usage = TokenEstimator.buildUsage(
+                    promptTokens: promptTokens,
+                    completionTokens: completionTokens
+                )
+                
+                // Build the final response
+                return buildChatCompletionResponse(
+                    parseResult: parseResult,
+                    model: request.model ?? "ondevice",
+                    usage: usage
+                )
+            }
+        } catch ModelExecutorError.queueFull {
+            throw ChatEngineError.queueFull
+        } catch LanguageModelSession.GenerationError.exceededContextWindowSize {
+            throw ChatEngineError.contextExceeded(used: 0, limit: 0)
+        } catch {
+            throw error
         }
-        
-        // Check model availability
-        guard case .available = model.availability else {
-            throw ChatEngineError.modelUnavailable(availabilityDescription)
-        }
-        
-        // Extract the last message as the prompt
-        let lastMessage = request.messages.last!
-        guard lastMessage.role == .user || lastMessage.role == .tool else {
-            throw ChatEngineError.lastMessageNotUser
-        }
-        
-        let promptContent = lastMessage.content?.textValue ?? ""
-        
-        // Build instructions from system messages and tool catalog
-        let instructions = buildInstructions(from: request)
-        
-        // Build transcript from conversation history (excluding last message)
-        let transcript = buildTranscript(from: Array(request.messages.dropLast()), tools: request.tools)
-        
-        // Create session
-        let session = LanguageModelSession(model: model, tools: [], transcript: transcript)
-        
-        // Build generation options
-        let options = buildOptions(from: request)
-        
-        // Build full prompt with instructions
-        let fullPrompt: String
-        if let instructionText = instructions, !instructionText.isEmpty {
-            fullPrompt = "\(instructionText)\n\n\(promptContent)"
-        } else {
-            fullPrompt = promptContent
-        }
-        
-        // Generate response - handle structured output if requested
-        var response: String
-        if let responseFormat = request.responseFormat,
-           responseFormat.type == .jsonSchema,
-           let schemaSpec = responseFormat.jsonSchema {
-            // Use structured output generation with schema
-            response = try await generateWithSchema(
-                session: session,
-                prompt: fullPrompt,
-                schemaSpec: schemaSpec,
-                options: options
-            )
-        } else if let responseFormat = request.responseFormat,
-                  responseFormat.type == .jsonObject {
-            // For json_object, add instruction to return JSON and strip any fences
-            let jsonPrompt = fullPrompt + "\n\nYou MUST respond with ONLY valid JSON. No markdown, no explanation, just the JSON object."
-            let rawResponse = try await session.respond(to: jsonPrompt, options: options).content
-            response = stripMarkdownFences(rawResponse)
-        } else {
-            // Regular text generation
-            response = try await session.respond(to: fullPrompt, options: options).content
-        }
-        
-        // Parse the response for tool calls if tools were provided
-        let parseResult = parseResponse(
-            content: response,
-            tools: request.tools,
-            toolChoice: request.toolChoice
-        )
-        
-        // Calculate token usage
-        let promptTokens = TokenEstimator.estimatePromptTokens(
-            messages: request.messages,
-            instructions: instructions
-        )
-        let completionTokens = TokenEstimator.estimateCompletionTokens(
-            content: parseResult.content,
-            toolCalls: parseResult.toolCalls
-        )
-        let usage = TokenEstimator.buildUsage(
-            promptTokens: promptTokens,
-            completionTokens: completionTokens
-        )
-        
-        // Build the final response
-        return buildChatCompletionResponse(
-            parseResult: parseResult,
-            model: request.model ?? "ondevice",
-            usage: usage
-        )
     }
     
     // MARK: - Chat Completion (Streaming)
@@ -146,111 +156,71 @@ public struct ChatEngine: Sendable {
             let capturedRequest = request
             let engine = self
             
-            Task {
+            let generationTask = Task {
                 do {
-                    // Validate request
-                    guard !capturedRequest.messages.isEmpty else {
-                        throw ChatEngineError.emptyMessages
-                    }
-                    
-                    let model = SystemLanguageModel(guardrails: .permissiveContentTransformations)
-                    guard case .available = model.availability else {
-                        throw ChatEngineError.modelUnavailable(engine.availabilityDescription)
-                    }
-                    
-                    let lastMessage = capturedRequest.messages.last!
-                    guard lastMessage.role == .user || lastMessage.role == .tool else {
-                        throw ChatEngineError.lastMessageNotUser
-                    }
-                    
-                    let promptContent = lastMessage.content?.textValue ?? ""
-                    let instructions = engine.buildInstructions(from: capturedRequest)
-                    let transcript = engine.buildTranscript(from: Array(capturedRequest.messages.dropLast()), tools: capturedRequest.tools)
-                    let session = LanguageModelSession(model: model, tools: [], transcript: transcript)
-                    let options = engine.buildOptions(from: capturedRequest)
-                    
-                    let responseId = engine.generateResponseId()
-                    let created = Int(Date().timeIntervalSince1970)
-                    let modelName = capturedRequest.model ?? "ondevice"
-                    
-                    // Build full prompt
-                    let fullPrompt: String
-                    if let instructionText = instructions, !instructionText.isEmpty {
-                        fullPrompt = "\(instructionText)\n\n\(promptContent)"
-                    } else {
-                        fullPrompt = promptContent
-                    }
-                    
-                    // Stream the response
-                    let stream = session.streamResponse(to: fullPrompt, options: options)
-                    
-                    var previousContent = ""
-                    var chunkIndex = 0
-                    var fullContent = ""
-                    
-                    for try await snapshot in stream {
-                        let currentContent = snapshot.content
-                        let delta: String
-                        if currentContent.hasPrefix(previousContent) {
-                            delta = String(currentContent.dropFirst(previousContent.count))
-                        } else {
-                            delta = currentContent
-                        }
-                        previousContent = currentContent
-                        fullContent = currentContent
+                    try await ModelExecutor.shared.execute {
+                        // Check for cancellation before starting
+                        try Task.checkCancellation()
                         
-                        if !delta.isEmpty {
-                            let chunk = StreamChunk(
-                                id: responseId,
-                                object: "chat.completion.chunk",
-                                created: created,
-                                model: modelName,
-                                choices: [
-                                    StreamChoice(
-                                        index: 0,
-                                        delta: Delta(
-                                            role: chunkIndex == 0 ? "assistant" : nil,
-                                            content: delta,
-                                            toolCalls: nil
-                                        ),
-                                        finishReason: nil
-                                    )
-                                ],
-                                usage: nil
-                            )
-                            continuation.yield(chunk)
-                            chunkIndex += 1
+                        // Validate request
+                        guard !capturedRequest.messages.isEmpty else {
+                            throw ChatEngineError.emptyMessages
                         }
-                    }
-                    
-                    // After streaming completes, check if the full content contains tool calls
-                    let hasTools = capturedRequest.tools != nil && !capturedRequest.tools!.isEmpty
-                    let toolChoiceIsNone = {
-                        if case .some(.none) = capturedRequest.toolChoice {
-                            return true
+                        
+                        let model = SystemLanguageModel(guardrails: .permissiveContentTransformations)
+                        guard case .available = model.availability else {
+                            throw ChatEngineError.modelUnavailable(engine.availabilityDescription)
                         }
-                        return false
-                    }()
-                    
-                    var finishReason: FinishReason = .stop
-                    var parsedToolCalls: [ToolCall]? = nil
-                    
-                    if hasTools && !toolChoiceIsNone {
-                        let parseResult = ToolCallParser.parse(fullContent, declaredTools: capturedRequest.tools!)
-                        if let toolCalls = parseResult.toolCalls {
-                            parsedToolCalls = toolCalls
-                            // Stream tool call chunks
-                            for (index, toolCall) in toolCalls.enumerated() {
-                                let streamToolCall = StreamToolCall(
-                                    index: index,
-                                    id: toolCall.id,
-                                    type: toolCall.type,
-                                    function: StreamFunctionCall(
-                                        name: toolCall.function.name,
-                                        arguments: toolCall.function.arguments
-                                    )
-                                )
-                                let toolChunk = StreamChunk(
+                        
+                        let lastMessage = capturedRequest.messages.last!
+                        guard lastMessage.role == .user || lastMessage.role == .tool else {
+                            throw ChatEngineError.lastMessageNotUser
+                        }
+                        
+                        let promptContent = lastMessage.content?.textValue ?? ""
+                        let instructions = engine.buildInstructions(from: capturedRequest)
+                        let transcript = engine.buildTranscript(from: Array(capturedRequest.messages.dropLast()), tools: capturedRequest.tools)
+                        let session = LanguageModelSession(model: model, tools: [], transcript: transcript)
+                        let options = engine.buildOptions(from: capturedRequest)
+                        
+                        let responseId = engine.generateResponseId()
+                        let created = Int(Date().timeIntervalSince1970)
+                        let modelName = capturedRequest.model ?? "ondevice"
+                        
+                        // Build full prompt
+                        let fullPrompt: String
+                        if let instructionText = instructions, !instructionText.isEmpty {
+                            fullPrompt = "\(instructionText)\n\n\(promptContent)"
+                        } else {
+                            fullPrompt = promptContent
+                        }
+                        
+                        // Stream the response
+                        let stream = session.streamResponse(to: fullPrompt, options: options)
+                        
+                        var previousContent = ""
+                        var chunkIndex = 0
+                        var fullContent = ""
+                        
+                        for try await snapshot in stream {
+                            // Check for task cancellation within the loop
+                            if Task.isCancelled { 
+                                fputs("[ChatEngine] Generation task cancelled, breaking loop\n", stderr)
+                                break 
+                            }
+                            
+                            let currentContent = snapshot.content
+                            let delta: String
+                            if currentContent.hasPrefix(previousContent) {
+                                delta = String(currentContent.dropFirst(previousContent.count))
+                            } else {
+                                delta = currentContent
+                            }
+                            previousContent = currentContent
+                            fullContent = currentContent
+                            
+                            if !delta.isEmpty {
+                                let chunk = StreamChunk(
                                     id: responseId,
                                     object: "chat.completion.chunk",
                                     created: created,
@@ -259,56 +229,118 @@ public struct ChatEngine: Sendable {
                                         StreamChoice(
                                             index: 0,
                                             delta: Delta(
-                                                role: nil,
-                                                content: nil,
-                                                toolCalls: [streamToolCall]
+                                                role: chunkIndex == 0 ? "assistant" : nil,
+                                                content: delta,
+                                                toolCalls: nil
                                             ),
                                             finishReason: nil
                                         )
                                     ],
                                     usage: nil
                                 )
-                                continuation.yield(toolChunk)
+                                continuation.yield(chunk)
+                                chunkIndex += 1
                             }
-                            finishReason = .toolCalls
                         }
+                        
+                        // If we were cancelled, don't send final chunk
+                        if Task.isCancelled { return }
+                        
+                        // After streaming completes, check if the full content contains tool calls
+                        let hasTools = capturedRequest.tools != nil && !capturedRequest.tools!.isEmpty
+                        let toolChoiceIsNone = {
+                            if case .some(.none) = capturedRequest.toolChoice {
+                                return true
+                            }
+                            return false
+                        }()
+                        
+                        var finishReason: FinishReason = .stop
+                        var parsedToolCalls: [ToolCall]? = nil
+                        
+                        if hasTools && !toolChoiceIsNone {
+                            let parseResult = ToolCallParser.parse(fullContent, declaredTools: capturedRequest.tools!)
+                            if let toolCalls = parseResult.toolCalls {
+                                parsedToolCalls = toolCalls
+                                // Stream tool call chunks
+                                for (index, toolCall) in toolCalls.enumerated() {
+                                    let streamToolCall = StreamToolCall(
+                                        index: index,
+                                        id: toolCall.id,
+                                        type: toolCall.type,
+                                        function: StreamFunctionCall(
+                                            name: toolCall.function.name,
+                                            arguments: toolCall.function.arguments
+                                        )
+                                    )
+                                    let toolChunk = StreamChunk(
+                                        id: responseId,
+                                        object: "chat.completion.chunk",
+                                        created: created,
+                                        model: modelName,
+                                        choices: [
+                                            StreamChoice(
+                                                index: 0,
+                                                delta: Delta(
+                                                    role: nil,
+                                                    content: nil,
+                                                    toolCalls: [streamToolCall]
+                                                ),
+                                                finishReason: nil
+                                            )
+                                        ],
+                                        usage: nil
+                                    )
+                                    continuation.yield(toolChunk)
+                                }
+                                finishReason = .toolCalls
+                            }
+                        }
+                        
+                        // Calculate usage for final chunk
+                        let promptTokens = TokenEstimator.estimatePromptTokens(
+                            messages: capturedRequest.messages,
+                            instructions: instructions
+                        )
+                        let completionTokens = TokenEstimator.estimateCompletionTokens(
+                            content: finishReason == .toolCalls ? nil : fullContent,
+                            toolCalls: parsedToolCalls
+                        )
+                        let usage = TokenEstimator.buildUsage(
+                            promptTokens: promptTokens,
+                            completionTokens: completionTokens
+                        )
+                        
+                        // Send final chunk with finish_reason and usage
+                        let finalChunk = StreamChunk(
+                            id: responseId,
+                            object: "chat.completion.chunk",
+                            created: created,
+                            model: modelName,
+                            choices: [
+                                StreamChoice(
+                                    index: 0,
+                                    delta: Delta(role: nil, content: nil, toolCalls: nil),
+                                    finishReason: finishReason
+                                )
+                            ],
+                            usage: usage
+                        )
+                        continuation.yield(finalChunk)
                     }
-                    
-                    // Calculate usage for final chunk
-                    let promptTokens = TokenEstimator.estimatePromptTokens(
-                        messages: capturedRequest.messages,
-                        instructions: instructions
-                    )
-                    let completionTokens = TokenEstimator.estimateCompletionTokens(
-                        content: finishReason == .toolCalls ? nil : fullContent,
-                        toolCalls: parsedToolCalls
-                    )
-                    let usage = TokenEstimator.buildUsage(
-                        promptTokens: promptTokens,
-                        completionTokens: completionTokens
-                    )
-                    
-                    // Send final chunk with finish_reason and usage
-                    let finalChunk = StreamChunk(
-                        id: responseId,
-                        object: "chat.completion.chunk",
-                        created: created,
-                        model: modelName,
-                        choices: [
-                            StreamChoice(
-                                index: 0,
-                                delta: Delta(role: nil, content: nil, toolCalls: nil),
-                                finishReason: finishReason
-                            )
-                        ],
-                        usage: usage
-                    )
-                    continuation.yield(finalChunk)
                     continuation.finish()
                     
+                } catch ModelExecutorError.queueFull {
+                    continuation.finish(throwing: ChatEngineError.queueFull)
+                } catch LanguageModelSession.GenerationError.exceededContextWindowSize {
+                    continuation.finish(throwing: ChatEngineError.contextExceeded(used: 0, limit: 0))
                 } catch {
                     continuation.finish(throwing: error)
                 }
+            }
+            
+            continuation.onTermination = { @Sendable _ in
+                generationTask.cancel()
             }
         }
     }
