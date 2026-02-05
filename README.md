@@ -42,6 +42,15 @@ swift run afmbridge-server --max-queue-size 10
 
 # Quiet mode (suppress logs)
 swift run afmbridge-server --quiet
+
+# Check Apple Foundation Models availability
+swift run afmbridge-server --status
+```
+
+Example output:
+
+```json
+{"status":"available","detail":"available"}
 ```
 
 ```bash
@@ -72,6 +81,15 @@ swift run afmbridge-cli -i
 
 # Connect via Unix socket (requires afmbridge-socket running)
 swift run afmbridge-cli --socket "Hello"
+
+# Check Apple Foundation Models availability
+swift run afmbridge-cli --status
+```
+
+Example output:
+
+```json
+{"status":"unavailable","detail":"unavailable: notEnabled"}
 ```
 
 ### Unix Socket Server
