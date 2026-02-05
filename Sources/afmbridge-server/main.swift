@@ -362,6 +362,10 @@ nonisolated(unsafe) var isQuiet = false
 @main
 struct ServerApp {
     static func main() async {
+        if CommandLine.arguments.contains("--status") {
+            reportStatusAndExit()
+        }
+
         if CommandLine.arguments.contains("--help") || CommandLine.arguments.contains("-h") {
             printHelp()
             exit(0)
@@ -516,6 +520,7 @@ func printHelp() {
       --port <port>             Port to listen on (default: 8000)
       --socket <path>           Unix socket path to listen on
       --max-queue-size <size>   Maximum number of queued requests (default: 100)
+      --status                  Print model availability JSON and exit
       -q, --quiet               Suppress non-error logs
       -h, --help                Show this help message
     
@@ -523,7 +528,40 @@ func printHelp() {
       afmbridge-server --port 8765
       afmbridge-server --socket /tmp/afmbridge.sock
       afmbridge-server --max-queue-size 10
+      afmbridge-server --status
     """)
+}
+
+func reportStatusAndExit() {
+    let engine = ChatEngine()
+    let description = engine.availabilityDescription
+    let status: String
+    let detail: String
+    let exitCode: Int
+
+    if engine.isAvailable {
+        status = "available"
+        detail = "available"
+        exitCode = 0
+    } else if description == "unknown" {
+        status = "unknown"
+        detail = "unknown"
+        exitCode = 1
+    } else {
+        status = "unavailable"
+        detail = description
+        exitCode = 2
+    }
+
+    let payload = ["status": status, "detail": detail]
+    if let data = try? JSONSerialization.data(withJSONObject: payload, options: []),
+       let json = String(data: data, encoding: .utf8) {
+        print(json)
+        exit(Int32(exitCode))
+    }
+
+    print("{\"status\":\"unknown\",\"detail\":\"unknown\"}")
+    exit(1)
 }
 
 func parseSocket(from arguments: [String]) -> String? {

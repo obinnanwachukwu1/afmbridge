@@ -17,6 +17,10 @@ struct CLI {
     static func main() async {
         // Parse arguments
         let args = Arguments.parse()
+
+        if args.status {
+            reportStatusAndExit()
+        }
         
         if args.help {
             printUsage()
@@ -302,6 +306,8 @@ struct CLI {
             
             --socket [PATH]      Use socket transport (default: /tmp/afmbridge.sock)
             --direct             Use direct transport (default)
+
+            --status             Print model availability JSON and exit
             
             -h, --help           Show this help
             -v, --version        Show version
@@ -324,6 +330,9 @@ struct CLI {
             
             # Using socket server
             afmbridge-cli --socket "Hello"
+
+            # Check model availability
+            afmbridge-cli --status
         """)
     }
 }
@@ -342,6 +351,7 @@ struct Arguments {
     var prompt: String? = nil
     var help: Bool = false
     var version: Bool = false
+    var status: Bool = false
     
     static func parse() -> Arguments {
         var args = Arguments()
@@ -397,6 +407,9 @@ struct Arguments {
                 
             case "--direct":
                 args.mode = .direct
+
+            case "--status":
+                args.status = true
                 
             case "-h", "--help":
                 args.help = true
@@ -415,4 +428,36 @@ struct Arguments {
         
         return args
     }
+}
+
+func reportStatusAndExit() {
+    let engine = ChatEngine()
+    let description = engine.availabilityDescription
+    let status: String
+    let detail: String
+    let exitCode: Int
+
+    if engine.isAvailable {
+        status = "available"
+        detail = "available"
+        exitCode = 0
+    } else if description == "unknown" {
+        status = "unknown"
+        detail = "unknown"
+        exitCode = 1
+    } else {
+        status = "unavailable"
+        detail = description
+        exitCode = 2
+    }
+
+    let payload = ["status": status, "detail": detail]
+    if let data = try? JSONSerialization.data(withJSONObject: payload, options: []),
+       let json = String(data: data, encoding: .utf8) {
+        print(json)
+        exit(Int32(exitCode))
+    }
+
+    print("{\"status\":\"unknown\",\"detail\":\"unknown\"}")
+    exit(1)
 }
